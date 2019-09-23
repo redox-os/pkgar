@@ -37,7 +37,7 @@ in the user's home directory.
 - public_key - 256-bit (32 byte) NaCl public key used to generate signature
 - entries - 64-bit count of entry structs, which immediately follow
 
-#### Header Entry Struct
+#### Entry Struct
 
 - sha256 - 256-bit (32 byte) sha256 sum of the file data
 - offset - 64-bit little endian offset of file data in the data portion
