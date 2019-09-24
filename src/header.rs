@@ -1,4 +1,5 @@
 use core::mem;
+use plain::Plain;
 
 use crate::Entry;
 
@@ -11,6 +12,8 @@ pub struct Header {
     /// Count of Entry structs, which immediately follow
     pub entries: u64,
 }
+
+unsafe impl Plain for Header {}
 
 impl Header {
     /// Retrieve the size of the Header and its entries

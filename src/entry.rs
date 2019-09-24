@@ -1,3 +1,5 @@
+use plain::Plain;
+
 #[repr(packed)]
 pub struct Entry {
     /// SHA-256 sum of the file data
@@ -11,3 +13,5 @@ pub struct Entry {
     /// NUL-terminated relative path from extract directory
     pub path: [u8; 256],
 }
+
+unsafe impl Plain for Entry {}
