@@ -33,11 +33,16 @@ in the user's home directory.
 
 #### Header Struct
 
+The size of the header struct is 136 bytes. All fields are packed.
+
 - signature - 512-bit (64 byte) NaCl signature of header data
 - public_key - 256-bit (32 byte) NaCl public key used to generate signature
-- entries - 64-bit count of entry structs, which immediately follow
+- sha256 - 256-bit (32 byte) sha256 sum of the entry data
+- count - 64-bit count of entry structs, which immediately follow
 
 #### Entry Struct
+
+The size of the entry struct is 306 bytes. All fields are packed.
 
 - sha256 - 256-bit (32 byte) sha256 sum of the file data
 - offset - 64-bit little endian offset of file data in the data portion

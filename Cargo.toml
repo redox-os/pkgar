@@ -8,6 +8,11 @@ edition = "2018"
 
 [dependencies]
 plain = "0.2.3"
+sodalite = "0.3.0"
+
+[dependencies.sha2]
+version = "0.8.0"
+default-features = false
 
 [features]
 default = ["std"]
