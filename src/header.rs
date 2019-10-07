@@ -1,9 +1,11 @@
 use core::convert::TryFrom;
 use core::mem;
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
+use crate::key::PublicKey;
 use crate::packed::{PackedEntry, PackedHeader};
 
+#[derive(Debug)]
 pub enum Error {
     InvalidData,
     InvalidKey,
@@ -14,8 +16,8 @@ pub enum Error {
 }
 
 pub struct Header<'a> {
-    header: &'a PackedHeader,
-    entries: &'a [PackedEntry],
+    pub header: &'a PackedHeader,
+    pub entries: &'a [PackedEntry],
 }
 
 impl<'a> Header<'a> {
@@ -47,12 +49,12 @@ impl<'a> Header<'a> {
         })
     }
 
-    pub fn new(data: &'a [u8], public_key: &[u8]) -> Result<Header<'a>, Error> {
+    pub fn new(data: &'a [u8], public_key: &PublicKey) -> Result<Header<'a>, Error> {
         let signed = data.get(..mem::size_of::<PackedHeader>())
             .ok_or(Error::Plain(plain::Error::TooShort))?;
 
         let header: &PackedHeader = plain::from_bytes(signed).map_err(Error::Plain)?;
-        if &header.public_key != public_key {
+        if &header.public_key != &public_key.as_data()[..] {
             return Err(Error::InvalidKey);
         }
 

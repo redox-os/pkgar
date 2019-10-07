@@ -42,12 +42,12 @@ The size of the header struct is 136 bytes. All fields are packed.
 
 #### Entry Struct
 
-The size of the entry struct is 306 bytes. All fields are packed.
+The size of the entry struct is 308 bytes. All fields are packed.
 
 - sha256 - 256-bit (32 byte) sha256 sum of the file data
 - offset - 64-bit little endian offset of file data in the data portion
 - size - 64-bit little endian size in bytes of the file data in the data portion
-- mode - 16-bit Unix permissions (user, group, other with read, write, execute)
+- mode - 32-bit Unix permissions (user, group, other with read, write, execute)
 - path - 256 byte NUL-terminated relative path from extract directory
 
 ### Data Portion
