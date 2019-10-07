@@ -2,6 +2,7 @@ use clap::{App, AppSettings, Arg, SubCommand};
 use pkgar::{Header, PackedEntry, PackedHeader, PublicKey, SecretKey};
 use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
+use std::convert::TryFrom;
 use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -180,8 +181,39 @@ fn extract(public_path: &str, archive_path: &str, folder: &str) {
     let data = fs::read(archive_path)
         .expect("failed to read archive file");
 
-    Header::new(&data, &public_key)
+    let header = Header::new(&data, &public_key)
         .expect("failed to parse header");
+
+    let data_offset = header.header.size()
+        .expect("overflow when calculating data offset");
+
+    for entry in header.entries {
+        let relative = Path::new(OsStr::from_bytes(entry.path()));
+        let path = Path::new(folder).join(relative);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .expect("failed to create entry parent directory");
+        }
+
+        let mut entry_file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(entry.mode)
+            .open(path)
+            .expect("failed to create entry file");
+
+        let start = data_offset.checked_add(entry.offset)
+            .and_then(|x| usize::try_from(x).ok())
+            .expect("overflow when calculating entry start");
+        let end = usize::try_from(entry.size).ok()
+            .and_then(|x| x.checked_add(start))
+            .expect("overflow when calculating entry end");
+        let entry_data = data.get(start..end)
+            .expect("failed to find entry data");
+        entry_file.write_all(&entry_data)
+            .expect("failed to write entry file");
+    }
 }
 
 fn keygen(secret_path: &str, public_path: &str) {
