@@ -25,16 +25,13 @@ unsafe impl Plain for Header {}
 impl Header {
     /// Parse header from raw header data and verify using public key
     pub fn new<'a>(data: &'a [u8], public_key: &PublicKey) -> Result<&'a Header, Error> {
+        // Retrieve signed header data
         let signed = data.get(..mem::size_of::<Header>())
             .ok_or(Error::Plain(plain::Error::TooShort))?;
 
-        let header: &Header = plain::from_bytes(signed).map_err(Error::Plain)?;
-        if &header.public_key != &public_key.as_data()[..] {
-            return Err(Error::InvalidKey);
-        }
-
+        // Verify signature and retrieve verified data
         let mut verified = [0; mem::size_of::<Header>()];
-        let count = sodalite::sign_attached_open(&mut verified, signed, &header.public_key)
+        let count = sodalite::sign_attached_open(&mut verified, signed, public_key.as_data())
             .map_err(|_err| Error::InvalidSignature)?;
 
         // Check that verified data matches signed data after skipping the signature
@@ -42,7 +39,19 @@ impl Header {
             return Err(Error::InvalidData);
         }
 
+        // Create header from signed data and check that public key matches
+        let header: &Header = unsafe { Header::new_unchecked(signed)? };
+        if &header.public_key != &public_key.as_data()[..] {
+            return Err(Error::InvalidKey);
+        }
+
         Ok(header)
+    }
+
+    /// Parse header from raw header data without verification
+    pub unsafe fn new_unchecked<'a>(data: &'a [u8]) -> Result<&'a Header, Error> {
+        plain::from_bytes(data)
+            .map_err(Error::Plain)
     }
 
     /// Retrieve the size of the entries
@@ -81,7 +90,12 @@ impl Header {
             return Err(Error::InvalidSha256);
         }
 
-        plain::slice_from_bytes(entries_data)
+        unsafe { Self::entries_unchecked(entries_data) }
+    }
+
+    /// Parse entries from raw entries data without verification
+    pub unsafe fn entries_unchecked<'a>(data: &'a [u8]) -> Result<&'a [Entry], Error> {
+        plain::slice_from_bytes(data)
             .map_err(Error::Plain)
     }
 }
