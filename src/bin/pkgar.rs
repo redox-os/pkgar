@@ -15,8 +15,15 @@ fn folder_entries<P, Q>(base: P, path: Q, entries: &mut Vec<PackedEntry>) -> io:
 {
     let base = base.as_ref();
     let path = path.as_ref();
+
+    // Sort each folder's entries by the file name
+    let mut read_dir = Vec::new();
     for entry_res in fs::read_dir(path)? {
-        let entry = entry_res?;
+        read_dir.push(entry_res?);
+    }
+    read_dir.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+
+    for entry in read_dir {
         let metadata = entry.metadata()?;
         let entry_path = entry.path();
         if metadata.is_dir() {
@@ -88,9 +95,6 @@ fn create(secret_path: &str, archive_path: &str, folder: &str) {
         sha256: [0; 32],
         count: entries.len() as u64
     };
-
-    // Sort the entries by path
-    entries.sort_by(|a, b| a.path.cmp(&b.path));
 
     // Assign offsets to each entry
     let mut data_size: u64 = 0;
