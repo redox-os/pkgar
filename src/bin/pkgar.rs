@@ -1,11 +1,12 @@
 use clap::{App, AppSettings, Arg, SubCommand};
-use pkgar::{Header, PackedEntry, PackedHeader, PublicKey, SecretKey};
+use pkgar::{PackedEntry, PackedHeader, PublicKey, SecretKey};
 use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
 use std::convert::TryFrom;
 use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::mem;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
@@ -79,7 +80,6 @@ fn create(secret_path: &str, archive_path: &str, folder: &str) {
         .write(true)
         .create(true)
         .truncate(true)
-        .mode(0o400)
         .open(archive_path)
         .expect("failed to create archive file");
 
@@ -107,7 +107,7 @@ fn create(secret_path: &str, archive_path: &str, folder: &str) {
     }
 
     // Seek to data offset
-    let data_offset = header.size()
+    let data_offset = header.total_size()
         .expect("overflow when calculating data offset");
     archive_file.seek(SeekFrom::Start(data_offset as u64))
         .expect("failed to seek to data offset");
@@ -181,17 +181,53 @@ fn extract(public_path: &str, archive_path: &str, folder: &str) {
 
     println!("extract {} to {}", archive_path, folder);
 
-    //TODO: read just header
-    let data = fs::read(archive_path)
-        .expect("failed to read archive file");
+    let mut archive_file = fs::OpenOptions::new()
+        .read(true)
+        .open(archive_path)
+        .expect("failed to open archive file");
 
-    let header = Header::new(&data, &public_key)
+    // Read header first
+    let mut header_data = [0; mem::size_of::<PackedHeader>()];
+    archive_file.read_exact(&mut header_data)
+        .expect("failed to read archive file");
+    let header = PackedHeader::new(&header_data, &public_key)
         .expect("failed to parse header");
 
-    let data_offset = header.header.size()
-        .expect("overflow when calculating data offset");
+    // Read entries next
+    let entries_size = header.entries_size()
+        .and_then(|x| usize::try_from(x).ok())
+        .expect("overflow when calculating entries size");
+    let mut entries_data = vec![0; entries_size];
+    archive_file.read_exact(&mut entries_data)
+        .expect("failed to read archive file");
+    let entries = header.entries(&entries_data)
+        .expect("failed to parse entries");
 
-    for entry in header.entries {
+    let data_offset = header.total_size()
+        .expect("overflow when calculating data offset");
+    for entry in entries {
+        let offset = data_offset.checked_add(entry.offset)
+            .expect("overflow when calculating entry offset");
+        archive_file.seek(SeekFrom::Start(offset))
+            .expect("failed to seek to entry offset");
+
+        // TODO: Do not read entire file into memory
+        let size = usize::try_from(entry.size)
+            .expect("overflow when calculating entry size");
+        let mut data = vec![0; size];
+        archive_file.read_exact(&mut data)
+            .expect("failed to read entry data");
+
+        let sha256 = {
+            let mut hasher = Sha256::new();
+            hasher.input(&data);
+            hasher.result()
+        };
+
+        if &entry.sha256 != sha256.as_slice() {
+            panic!("failed to verify entry data");
+        }
+
         let relative = Path::new(OsStr::from_bytes(entry.path()));
         let path = Path::new(folder).join(relative);
         if let Some(parent) = path.parent() {
@@ -199,23 +235,14 @@ fn extract(public_path: &str, archive_path: &str, folder: &str) {
                 .expect("failed to create entry parent directory");
         }
 
-        let mut entry_file = fs::OpenOptions::new()
+        fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
             .mode(entry.mode)
             .open(path)
-            .expect("failed to create entry file");
-
-        let start = data_offset.checked_add(entry.offset)
-            .and_then(|x| usize::try_from(x).ok())
-            .expect("overflow when calculating entry start");
-        let end = usize::try_from(entry.size).ok()
-            .and_then(|x| x.checked_add(start))
-            .expect("overflow when calculating entry end");
-        let entry_data = data.get(start..end)
-            .expect("failed to find entry data");
-        entry_file.write_all(&entry_data)
+            .expect("failed to create entry file")
+            .write_all(&data)
             .expect("failed to write entry file");
     }
 }
@@ -243,6 +270,46 @@ fn keygen(secret_path: &str, public_path: &str) {
         .expect("failed to create public key file")
         .write_all(public_key.as_data())
         .expect("failed to write public key file");
+}
+
+fn list(public_path: &str, archive_path: &str) {
+    let public_key = {
+        let mut data = [0; 32];
+        fs::OpenOptions::new()
+            .read(true)
+            .open(public_path)
+            .expect("failed to open public key file")
+            .read_exact(&mut data)
+            .expect("failed to read public key file");
+        PublicKey::from_data(data)
+    };
+
+    let mut archive_file = fs::OpenOptions::new()
+        .read(true)
+        .open(archive_path)
+        .expect("failed to open archive file");
+
+    // Read header first
+    let mut header_data = [0; mem::size_of::<PackedHeader>()];
+    archive_file.read_exact(&mut header_data)
+        .expect("failed to read archive file");
+    let header = PackedHeader::new(&header_data, &public_key)
+        .expect("failed to parse header");
+
+    // Read entries next
+    let entries_size = header.entries_size()
+        .and_then(|x| usize::try_from(x).ok())
+        .expect("overflow when calculating entries size");
+    let mut entries_data = vec![0; entries_size];
+    archive_file.read_exact(&mut entries_data)
+        .expect("failed to read archive file");
+    let entries = header.entries(&entries_data)
+        .expect("failed to parse entries");
+
+    for entry in entries {
+        let relative = Path::new(OsStr::from_bytes(entry.path()));
+        println!("{}", relative.display());
+    }
 }
 
 fn main() {
@@ -309,6 +376,23 @@ fn main() {
                 .takes_value(true)
             )
         )
+        .subcommand(SubCommand::with_name("list")
+            .about("List archive")
+            .arg(Arg::with_name("public")
+                .help("Public key")
+                .short("p")
+                .long("public")
+                .required(true)
+                .takes_value(true)
+            )
+            .arg(Arg::with_name("file")
+                .help("Archive file")
+                .short("f")
+                .long("file")
+                .required(true)
+                .takes_value(true)
+            )
+        )
         .get_matches();
 
     if let Some(matches) = matches.subcommand_matches("create") {
@@ -327,6 +411,11 @@ fn main() {
         keygen(
             matches.value_of("secret").unwrap(),
             matches.value_of("public").unwrap(),
+        );
+    } else if let Some(matches) = matches.subcommand_matches("list") {
+        list(
+            matches.value_of("public").unwrap(),
+            matches.value_of("file").unwrap()
         );
     }
 }

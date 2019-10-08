@@ -1,9 +1,17 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
-pub use crate::header::Header;
 pub use crate::key::{PublicKey, SecretKey};
 pub use crate::packed::{PackedHeader, PackedEntry};
 
-mod header;
 mod key;
 mod packed;
+
+#[derive(Debug)]
+pub enum Error {
+    InvalidData,
+    InvalidKey,
+    InvalidSha256,
+    InvalidSignature,
+    Plain(plain::Error),
+    Overflow,
+}
