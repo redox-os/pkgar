@@ -5,18 +5,20 @@ set -ex
 rm -rf target/test
 mkdir -p target/test
 
-cargo run --release -- \
+cargo build --release
+
+time target/release/pkgar \
     keygen \
     --secret target/test/secret.key \
     --public target/test/public.key
 
-cargo run --release -- \
+time target/release/pkgar \
     create \
     --secret target/test/secret.key \
     --file target/test/src.pkg \
     src
 
-cargo run --release -- \
+time target/release/pkgar \
     extract \
     --public target/test/public.key \
     --file target/test/src.pkg \
