@@ -1,5 +1,5 @@
 use clap::{App, AppSettings, Arg, SubCommand};
-use pkgar::{PackedEntry, PackedHeader, PublicKey, SecretKey};
+use pkgar::{Entry, Header, PublicKey, SecretKey};
 use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
 use std::convert::TryFrom;
@@ -11,7 +11,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 
-fn folder_entries<P, Q>(base: P, path: Q, entries: &mut Vec<PackedEntry>) -> io::Result<()>
+fn folder_entries<P, Q>(base: P, path: Q, entries: &mut Vec<Entry>) -> io::Result<()>
     where P: AsRef<Path>, Q: AsRef<Path>
 {
     let base = base.as_ref();
@@ -47,7 +47,7 @@ fn folder_entries<P, Q>(base: P, path: Q, entries: &mut Vec<PackedEntry>) -> io:
             }
             path_bytes[..relative_bytes.len()].copy_from_slice(relative_bytes);
 
-            entries.push(PackedEntry {
+            entries.push(Entry {
                 sha256: [0; 32],
                 offset: 0,
                 size: metadata.len(),
@@ -89,7 +89,7 @@ fn create(secret_path: &str, archive_path: &str, folder: &str) {
         .expect("failed to read folder");
 
     // Create initial header
-    let mut header = PackedHeader {
+    let mut header = Header {
         signature: [0; 64],
         public_key: secret_key.public_key().into_data(),
         sha256: [0; 32],
@@ -187,10 +187,10 @@ fn extract(public_path: &str, archive_path: &str, folder: &str) {
         .expect("failed to open archive file");
 
     // Read header first
-    let mut header_data = [0; mem::size_of::<PackedHeader>()];
+    let mut header_data = [0; mem::size_of::<Header>()];
     archive_file.read_exact(&mut header_data)
         .expect("failed to read archive file");
-    let header = PackedHeader::new(&header_data, &public_key)
+    let header = Header::new(&header_data, &public_key)
         .expect("failed to parse header");
 
     // Read entries next
@@ -290,10 +290,10 @@ fn list(public_path: &str, archive_path: &str) {
         .expect("failed to open archive file");
 
     // Read header first
-    let mut header_data = [0; mem::size_of::<PackedHeader>()];
+    let mut header_data = [0; mem::size_of::<Header>()];
     archive_file.read_exact(&mut header_data)
         .expect("failed to read archive file");
-    let header = PackedHeader::new(&header_data, &public_key)
+    let header = Header::new(&header_data, &public_key)
         .expect("failed to parse header");
 
     // Read entries next
