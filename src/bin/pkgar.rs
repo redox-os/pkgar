@@ -205,6 +205,8 @@ fn extract(public_path: &str, archive_path: &str, folder: &str) {
 
     let data_offset = header.total_size()
         .expect("overflow when calculating data offset");
+    let folder_absolute = Path::new(folder).canonicalize()
+        .expect("failed to canonicalize folder");
     for entry in entries {
         let offset = data_offset.checked_add(entry.offset)
             .expect("overflow when calculating entry offset");
@@ -229,8 +231,12 @@ fn extract(public_path: &str, archive_path: &str, folder: &str) {
         }
 
         let relative = Path::new(OsStr::from_bytes(entry.path()));
-        let path = Path::new(folder).join(relative);
-        if let Some(parent) = path.parent() {
+        let absolute = folder_absolute.join(relative).canonicalize()
+            .expect("failed to canonicalize entry path");
+        if ! absolute.starts_with(&folder_absolute) {
+            panic!("entry path escapes from folder");
+        }
+        if let Some(parent) = absolute.parent() {
             fs::create_dir_all(parent)
                 .expect("failed to create entry parent directory");
         }
@@ -240,7 +246,7 @@ fn extract(public_path: &str, archive_path: &str, folder: &str) {
             .create(true)
             .truncate(true)
             .mode(entry.mode)
-            .open(path)
+            .open(absolute)
             .expect("failed to create entry file")
             .write_all(&data)
             .expect("failed to write entry file");
