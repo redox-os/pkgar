@@ -46,22 +46,27 @@ impl Header {
     }
 
     /// Retrieve the size of the entries
-    pub fn entries_size(&self) -> Option<u64> {
+    pub fn entries_size(&self) -> Result<u64, Error> {
+        let entry_size = u64::try_from(mem::size_of::<Entry>())
+            .map_err(Error::TryFromInt)?;
         self.count
-            .checked_mul(mem::size_of::<Entry>() as u64)
+            .checked_mul(entry_size)
+            .ok_or(Error::Overflow)
     }
 
     /// Retrieve the size of the Header and its entries
-    pub fn total_size(&self) -> Option<u64> {
-        self.entries_size()
-            .and_then(|x| x.checked_add(mem::size_of::<Header>() as u64))
+    pub fn total_size(&self) -> Result<u64, Error> {
+        let header_size = u64::try_from(mem::size_of::<Header>())
+            .map_err(Error::TryFromInt)?;
+        self.entries_size()?
+            .checked_add(header_size)
+            .ok_or(Error::Overflow)
     }
 
     /// Parse entries from raw entries data and verify using sha256
     pub fn entries<'a>(&self, data: &'a [u8]) -> Result<&'a [Entry], Error> {
-        let entries_size = self.entries_size()
-            .and_then(|x| usize::try_from(x).ok())
-            .ok_or(Error::Overflow)?;
+        let entries_size = usize::try_from(self.entries_size()?)
+            .map_err(Error::TryFromInt)?;
 
         let entries_data = data.get(..entries_size)
             .ok_or(Error::Plain(plain::Error::TooShort))?;

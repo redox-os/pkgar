@@ -1,5 +1,5 @@
 use clap::{App, AppSettings, Arg, SubCommand};
-use pkgar::{Entry, Header, PublicKey, SecretKey};
+use pkgar::{Entry, Error, Header, PublicKey, SecretKey};
 use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
 use std::convert::TryFrom;
@@ -195,7 +195,7 @@ fn extract(public_path: &str, archive_path: &str, folder: &str) {
 
     // Read entries next
     let entries_size = header.entries_size()
-        .and_then(|x| usize::try_from(x).ok())
+        .and_then(|x| usize::try_from(x).map_err(Error::TryFromInt))
         .expect("overflow when calculating entries size");
     let mut entries_data = vec![0; entries_size];
     archive_file.read_exact(&mut entries_data)
@@ -298,7 +298,7 @@ fn list(public_path: &str, archive_path: &str) {
 
     // Read entries next
     let entries_size = header.entries_size()
-        .and_then(|x| usize::try_from(x).ok())
+        .and_then(|x| usize::try_from(x).map_err(Error::TryFromInt))
         .expect("overflow when calculating entries size");
     let mut entries_data = vec![0; entries_size];
     archive_file.read_exact(&mut entries_data)

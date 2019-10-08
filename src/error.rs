@@ -4,6 +4,9 @@ pub enum Error {
     InvalidKey,
     InvalidSha256,
     InvalidSignature,
+    #[cfg(feature = "std")]
+    Io(std::io::Error),
     Plain(plain::Error),
     Overflow,
+    TryFromInt(core::num::TryFromIntError),
 }
