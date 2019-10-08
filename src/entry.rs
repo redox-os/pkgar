@@ -32,20 +32,3 @@ impl Entry {
 }
 
 unsafe impl Plain for Entry {}
-
-#[cfg(test)]
-mod tests {
-    use core::mem;
-
-    use super::{Entry, Header};
-
-    #[test]
-    fn header_size() {
-        assert_eq!(mem::size_of::<Header>(), 136);
-    }
-
-    #[test]
-    fn entry_size() {
-        assert_eq!(mem::size_of::<Entry>(), 308);
-    }
-}
