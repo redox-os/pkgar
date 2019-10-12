@@ -9,7 +9,7 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::mem;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-use std::path::Path;
+use std::path::{Component, Path};
 
 fn folder_entries<P, Q>(base: P, path: Q, entries: &mut Vec<Entry>) -> io::Result<()>
     where P: AsRef<Path>, Q: AsRef<Path>
@@ -205,8 +205,7 @@ fn extract(public_path: &str, archive_path: &str, folder: &str) {
 
     let data_offset = header.total_size()
         .expect("overflow when calculating data offset");
-    let folder_absolute = Path::new(folder).canonicalize()
-        .expect("failed to canonicalize folder");
+    let folder_path = Path::new(folder);
     for entry in entries {
         let offset = data_offset.checked_add(entry.offset)
             .expect("overflow when calculating entry offset");
@@ -231,12 +230,17 @@ fn extract(public_path: &str, archive_path: &str, folder: &str) {
         }
 
         let relative = Path::new(OsStr::from_bytes(entry.path()));
-        let absolute = folder_absolute.join(relative).canonicalize()
-            .expect("failed to canonicalize entry path");
-        if ! absolute.starts_with(&folder_absolute) {
+        for component in relative.components() {
+            match component {
+                Component::Normal(_) => (),
+                invalid => panic!("entry path contains invalid component: {:?}", invalid),
+            }
+        }
+        let entry_path = folder_path.join(relative);
+        if ! entry_path.starts_with(&folder_path) {
             panic!("entry path escapes from folder");
         }
-        if let Some(parent) = absolute.parent() {
+        if let Some(parent) = entry_path.parent() {
             fs::create_dir_all(parent)
                 .expect("failed to create entry parent directory");
         }
@@ -246,7 +250,7 @@ fn extract(public_path: &str, archive_path: &str, folder: &str) {
             .create(true)
             .truncate(true)
             .mode(entry.mode)
-            .open(absolute)
+            .open(entry_path)
             .expect("failed to create entry file")
             .write_all(&data)
             .expect("failed to write entry file");
