@@ -203,6 +203,8 @@ fn extract(public_path: &str, archive_path: &str, folder: &str) {
     let entries = header.entries(&entries_data)
         .expect("failed to parse entries");
 
+    // TODO: Validate that all entries can be installed, before installing
+
     let data_offset = header.total_size()
         .expect("overflow when calculating data offset");
     let folder_path = Path::new(folder);
