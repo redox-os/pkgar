@@ -3,7 +3,6 @@
 use core::convert::TryFrom;
 use core::mem;
 use plain::Plain;
-use sha2::{Digest, Sha256};
 
 use crate::{Entry, Error, PublicKey};
 
@@ -15,7 +14,7 @@ pub struct Header {
     /// NaCl public key used to generate signature
     pub public_key: [u8; 32],
     /// SHA-256 sum of entry data
-    pub sha256: [u8; 32],
+    pub blake3: [u8; 32],
     /// Count of Entry structs, which immediately follow
     pub count: u64,
 }
@@ -72,7 +71,7 @@ impl Header {
             .ok_or(Error::Overflow)
     }
 
-    /// Parse entries from raw entries data and verify using sha256
+    /// Parse entries from raw entries data and verify using blake3
     pub fn entries<'a>(&self, data: &'a [u8]) -> Result<&'a [Entry], Error> {
         let entries_size = usize::try_from(self.entries_size()?)
             .map_err(Error::TryFromInt)?;
@@ -80,14 +79,10 @@ impl Header {
         let entries_data = data.get(..entries_size)
             .ok_or(Error::Plain(plain::Error::TooShort))?;
 
-        let sha256 = {
-            let mut hasher = Sha256::new();
-            hasher.input(&entries_data);
-            hasher.result()
-        };
+        let hash = blake3::hash(&entries_data);
 
-        if &self.sha256 != sha256.as_slice() {
-            return Err(Error::InvalidSha256);
+        if &self.blake3 != hash.as_bytes() {
+            return Err(Error::InvalidBlake3);
         }
 
         unsafe { Self::entries_unchecked(entries_data) }
