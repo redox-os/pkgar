@@ -2,7 +2,7 @@
 pub enum Error {
     InvalidData,
     InvalidKey,
-    InvalidSha256,
+    InvalidBlake3,
     InvalidSignature,
     #[cfg(feature = "std")]
     Io(std::io::Error),
