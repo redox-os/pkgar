@@ -1,7 +1,6 @@
 use clap::{App, AppSettings, Arg, SubCommand};
 use pkgar::{Entry, Error, Header, PublicKey, SecretKey};
 use rand::rngs::OsRng;
-use sha2::{Digest, Sha256};
 use std::convert::TryFrom;
 use std::ffi::OsStr;
 use std::fs;
@@ -48,7 +47,7 @@ fn folder_entries<P, Q>(base: P, path: Q, entries: &mut Vec<Entry>) -> io::Resul
             path_bytes[..relative_bytes.len()].copy_from_slice(relative_bytes);
 
             entries.push(Entry {
-                sha256: [0; 32],
+                blake3: [0; 32],
                 offset: 0,
                 size: metadata.len(),
                 mode: metadata.permissions().mode(),
@@ -92,7 +91,7 @@ fn create(secret_path: &str, archive_path: &str, folder: &str) {
     let mut header = Header {
         signature: [0; 64],
         public_key: secret_key.public_key().into_data(),
-        sha256: [0; 32],
+        blake3: [0; 32],
         count: entries.len() as u64
     };
 
@@ -113,8 +112,8 @@ fn create(secret_path: &str, archive_path: &str, folder: &str) {
         .expect("failed to seek to data offset");
     //TODO: fallocate data_offset + data_size
 
-    // Stream each file, writing data and calculating shasums
-    let mut header_hasher = Sha256::new();
+    // Stream each file, writing data and calculating b3sums
+    let mut header_hasher = blake3::Hasher::new();
     let mut buf = vec![0; 4 * 1024 * 1024];
     for entry in &mut entries {
         let relative = Path::new(OsStr::from_bytes(entry.path()));
@@ -124,7 +123,7 @@ fn create(secret_path: &str, archive_path: &str, folder: &str) {
             .open(path)
             .expect("failed to open entry file");
 
-        let mut hasher = Sha256::new();
+        let mut hasher = blake3::Hasher::new();
         loop {
             let count = entry_file.read(&mut buf)
                 .expect("failed to read entry file");
@@ -134,15 +133,15 @@ fn create(secret_path: &str, archive_path: &str, folder: &str) {
             //TODO: Progress
             archive_file.write_all(&buf[..count])
                 .expect("failed to write entry data");
-            hasher.input(&buf[..count]);
+            hasher.update(&buf[..count]);
         }
-        entry.sha256.copy_from_slice(hasher.result().as_slice());
+        entry.blake3.copy_from_slice(hasher.finalize().as_bytes());
 
-        header_hasher.input(unsafe {
+        header_hasher.update(unsafe {
             plain::as_bytes(entry)
         });
     }
-    header.sha256.copy_from_slice(header_hasher.result().as_slice());
+    header.blake3.copy_from_slice(header_hasher.finalize().as_bytes());
 
     // Calculate signature
     let unsigned = header.clone();
@@ -221,13 +220,13 @@ fn extract(public_path: &str, archive_path: &str, folder: &str) {
         archive_file.read_exact(&mut data)
             .expect("failed to read entry data");
 
-        let sha256 = {
-            let mut hasher = Sha256::new();
-            hasher.input(&data);
-            hasher.result()
+        let hash = {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(&data);
+            hasher.finalize()
         };
 
-        if &entry.sha256 != sha256.as_slice() {
+        if &entry.blake3 != hash.as_bytes() {
             panic!("failed to verify entry data");
         }
 
