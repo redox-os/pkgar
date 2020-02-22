@@ -13,7 +13,7 @@ pub struct Header {
     pub signature: [u8; 64],
     /// NaCl public key used to generate signature
     pub public_key: [u8; 32],
-    /// SHA-256 sum of entry data
+    /// Blake3 sum of entry data
     pub blake3: [u8; 32],
     /// Count of Entry structs, which immediately follow
     pub count: u64,
