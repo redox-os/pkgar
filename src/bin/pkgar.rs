@@ -133,11 +133,11 @@ fn create(secret_path: &str, archive_path: &str, folder: &str) {
             //TODO: Progress
             archive_file.write_all(&buf[..count])
                 .expect("failed to write entry data");
-            hasher.update(&buf[..count]);
+            hasher.update_with_join::<blake3::join::RayonJoin>(&buf[..count]);
         }
         entry.blake3.copy_from_slice(hasher.finalize().as_bytes());
 
-        header_hasher.update(unsafe {
+        header_hasher.update_with_join::<blake3::join::RayonJoin>(unsafe {
             plain::as_bytes(entry)
         });
     }
@@ -222,7 +222,7 @@ fn extract(public_path: &str, archive_path: &str, folder: &str) {
 
         let hash = {
             let mut hasher = blake3::Hasher::new();
-            hasher.update(&data);
+            hasher.update_with_join::<blake3::join::RayonJoin>(&data);
             hasher.finalize()
         };
 
