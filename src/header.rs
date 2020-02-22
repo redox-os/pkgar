@@ -79,7 +79,12 @@ impl Header {
         let entries_data = data.get(..entries_size)
             .ok_or(Error::Plain(plain::Error::TooShort))?;
 
-        let hash = blake3::hash(&entries_data);
+        let hash = {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update_with_join::<blake3::join::RayonJoin>(&entries_data);
+            hasher.finalize()
+        };
+
 
         if &self.blake3 != hash.as_bytes() {
             return Err(Error::InvalidBlake3);
