@@ -1,4 +1,4 @@
-use clap::{App, AppSettings, Arg, SubCommand};
+use ansi_term::Colour::{Green, Yellow, Red};
 use pkgar::{Entry, Error, Header, PublicKey, SecretKey};
 use rand::rngs::OsRng;
 use std::convert::TryFrom;
@@ -323,110 +323,232 @@ fn list(public_path: &str, archive_path: &str) {
     }
 }
 
-fn main() {
-    let matches = App::new("pkgar")
-        .setting(AppSettings::SubcommandRequiredElseHelp)
-        .subcommand(SubCommand::with_name("create")
-            .about("Create archive")
-            .arg(Arg::with_name("secret")
-                .help("Secret key")
-                .short("s")
-                .long("secret")
-                .required(true)
-                .takes_value(true)
-            )
-            .arg(Arg::with_name("file")
-                .help("Archive file")
-                .short("f")
-                .long("file")
-                .required(true)
-                .takes_value(true)
-            )
-            .arg(Arg::with_name("folder")
-                .help("Folder to archive, defaults to \".\"")
-                .required(true)
-                .default_value(".")
-            )
-        )
-        .subcommand(SubCommand::with_name("extract")
-            .about("Extract archive")
-            .arg(Arg::with_name("public")
-                .help("Public key")
-                .short("p")
-                .long("public")
-                .required(true)
-                .takes_value(true)
-            )
-            .arg(Arg::with_name("file")
-                .help("Archive file")
-                .short("f")
-                .long("file")
-                .required(true)
-                .takes_value(true)
-            )
-            .arg(Arg::with_name("folder")
-                .help("Folder to archive, defaults to \".\"")
-                .required(true)
-                .default_value(".")
-            )
-        )
-        .subcommand(SubCommand::with_name("keygen")
-            .about("Generate keys")
-            .arg(Arg::with_name("secret")
-                .help("Secret key")
-                .short("s")
-                .long("secret")
-                .required(true)
-                .takes_value(true)
-            )
-            .arg(Arg::with_name("public")
-                .help("Public key")
-                .short("p")
-                .long("public")
-                .required(true)
-                .takes_value(true)
-            )
-        )
-        .subcommand(SubCommand::with_name("list")
-            .about("List archive")
-            .arg(Arg::with_name("public")
-                .help("Public key")
-                .short("p")
-                .long("public")
-                .required(true)
-                .takes_value(true)
-            )
-            .arg(Arg::with_name("file")
-                .help("Archive file")
-                .short("f")
-                .long("file")
-                .required(true)
-                .takes_value(true)
-            )
-        )
-        .get_matches();
+fn help_print() {
+    println!(
+        "{} {}
 
-    if let Some(matches) = matches.subcommand_matches("create") {
-        create(
-            matches.value_of("secret").unwrap(),
-            matches.value_of("file").unwrap(),
-            matches.value_of("folder").unwrap()
-        );
-    } else if let Some(matches) = matches.subcommand_matches("extract") {
-        extract(
-            matches.value_of("public").unwrap(),
-            matches.value_of("file").unwrap(),
-            matches.value_of("folder").unwrap()
-        );
-    } else if let Some(matches) = matches.subcommand_matches("keygen") {
-        keygen(
-            matches.value_of("secret").unwrap(),
-            matches.value_of("public").unwrap(),
-        );
-    } else if let Some(matches) = matches.subcommand_matches("list") {
-        list(
-            matches.value_of("public").unwrap(),
-            matches.value_of("file").unwrap()
-        );
+{}
+    pkgar <SUBCOMMAND>
+
+{}
+    {},{}       Prints help information
+    {},{}    Prints version information
+
+{}
+    {}     Create archive
+    {}    Extract archive
+    {}       Prints this message or the help of the given subcommand(s)
+    {}     Generate keys
+    {}       List archive",
+        Green.paint("pkgar"),
+        env!("CARGO_PKG_VERSION"),
+        Yellow.paint("USAGE:"),
+        Yellow.paint("FLAGS:"),
+        Green.paint("-h"),
+        Green.paint("--help"),
+        Green.paint("-V"),
+        Green.paint("--version"),
+        Yellow.paint("SUBCOMMANDS:"),
+        Green.paint("create"),
+        Green.paint("extract"),
+        Green.paint("help"),
+        Green.paint("keygen"),
+        Green.paint("list"),
+    );
+}
+
+fn version_print() {
+    println!("pkgar {}", env!("CARGO_PKG_VERSION"))
+}
+
+#[derive(Debug)]
+enum AppArgs {
+    Flags {
+        help: bool,
+        version: bool
+    },
+    Create {
+        secret: String,
+        file: String,
+        folder: Vec<String>
+    },
+    Extract {
+        public: String,
+        file: String,
+        folder: Vec<String>
+    },
+    Keygen {
+        public: String,
+        secret: String,
+    },
+    List {
+        public: String,
+        file: String,
     }
+}
+
+fn main() {
+    match submain() {
+        AppArgs::Flags { help, version } => {
+            if help {
+                help_print();
+            } else if version {
+                version_print();
+            } else if !help && !version {
+                help_print();
+            }
+        },
+        AppArgs::Create { file, secret, folder } => {
+            if !folder.is_empty() {
+                create(&secret, &file, &folder[0]);
+            } else {
+                create(&secret, &file, ".");
+                }
+        },
+        AppArgs::Extract{public, file, folder} => {
+            if !folder.is_empty() {
+                extract(&public,  &file, &folder[0]);
+            } else {
+                extract(&public,  &file, ".");
+            }
+        },
+        AppArgs::Keygen{public,secret} => {
+            keygen(&secret, &public)
+        },
+        AppArgs::List{public,file} => {
+            list(&public,  &file) 
+        },
+    }
+}
+
+fn submain() -> AppArgs {
+    let mut args = pico_args::Arguments::from_env();
+
+    let subcommand = match args.subcommand() {
+        Ok(s) => s,
+        Err(_) => {
+            eprintln!("Error: Invalid subcommand.");
+            std::process::exit(1);
+        }
+    };
+
+    match subcommand.as_deref() {
+        Some("create") => match parse_create(args) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("{} {}
+
+{}
+    pkgar create <folder> --file <file> --secret <secret>
+
+For more information try {}", Red.paint("Error:"), e, Yellow.paint("USAGE:"), Green.paint("--help"));
+                std::process::exit(1);
+            }
+        },
+        Some("extract") => match parse_extract(args) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("{} {}
+
+{}
+    pkgar extract <folder> --file <file> --public <public>
+
+For more information try {}", Red.paint("Error:"), e, Yellow.paint("USAGE:"), Green.paint("--help"));                
+                std::process::exit(1);
+            }
+        },
+        Some("keygen") => match parse_keygen(args) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("{} {}
+
+{}
+    pkgar create <folder> --secret <secret> --secret <secret>
+
+For more information try {}", Red.paint("Error:"), e, Yellow.paint("USAGE:"), Green.paint("--help"));                
+                std::process::exit(1);
+            }
+        },
+        Some("list") => match parse_list(args) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("{} {}
+
+{}
+    pkgar create <folder> --public <public> --file <file>\n\n\
+
+For more information try {}", Red.paint("Error:"), e, Yellow.paint("USAGE:"), Green.paint("--help"));                   
+                std::process::exit(1);
+            }
+        },
+        None => {
+            match parse_flags(args) {
+                Ok(a) => a,
+                Err(e) => {
+                    eprintln!("{} {}
+
+{}
+pkgar {}", Red.paint("Error:"), e, Yellow.paint("USAGE:"), Green.paint("--help")); 
+                    std::process::exit(1);
+                }
+            }
+        }
+        Some(s) => {
+            eprintln!("Error: '{}' is an unknown subcommand.", s);
+            std::process::exit(1);
+        }
+    }
+}
+
+// Determines how the create subcommand's arguements are parsed
+fn parse_create(mut args: pico_args::Arguments) -> Result<AppArgs, pico_args::Error> {
+    let app_args = AppArgs::Create {
+        file: args.value_from_str("--file")?,
+        secret: args.value_from_str("--secret")?,
+        folder: args.free()?,
+    };
+    Ok(app_args)
+}
+
+// Determines how the extract subcommand's arguements are parsed
+fn parse_extract(mut args: pico_args::Arguments) -> Result<AppArgs, pico_args::Error> {
+    let app_args = AppArgs::Extract {
+        file: args.value_from_str("--file")?,
+        public: args.value_from_str("--public")?,
+        folder: args.free()?,
+    };
+    Ok(app_args)
+}
+
+// Determines how the keygen subcommand's arguements are parsed
+fn parse_keygen(mut args: pico_args::Arguments) -> Result<AppArgs, pico_args::Error> {
+    let app_args = AppArgs::Keygen {
+        public: args.value_from_str("--public")?,
+        secret: args.value_from_str("--secret")?,
+    };
+
+    args.finish()?;
+    Ok(app_args)
+}
+
+// Determines how the list subcommand's arguements are parsed
+fn parse_list(mut args: pico_args::Arguments) -> Result<AppArgs, pico_args::Error> {
+    let app_args = AppArgs::List {
+        file: args.value_from_str("--file")?,
+            public: args.value_from_str("--secret")?,
+    };
+
+    args.finish()?;
+    Ok(app_args)
+}
+
+// Determines how the flags are parsed
+fn parse_flags(mut args: pico_args::Arguments) -> Result<AppArgs, pico_args::Error> {
+    let app_args = AppArgs::Flags {
+        help: args.contains(["-h", "--help"]),
+        version: args.contains(["-V", "--version"])
+    };
+
+    args.finish()?;
+    Ok(app_args)
 }
