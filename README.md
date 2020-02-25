@@ -26,7 +26,7 @@ valid single file: `cat example.pkgar_head example.pkgar_data > example.pkgar`
 
 The header portion is designed to contain the data required to verify files
 already installed on disk. It is signed using NaCl (or a compatible
-implementation such as libsodium), and contains the sha256, offset, size, mode,
+implementation such as libsodium), and contains the blake3, offset, size, mode,
 and name of each file. The user and group IDs are left out intentionally, to
 support the installation of a package either as root or as a user, for example,
 in the user's home directory.
@@ -37,14 +37,14 @@ The size of the header struct is 136 bytes. All fields are packed.
 
 - signature - 512-bit (64 byte) NaCl signature of header data
 - public_key - 256-bit (32 byte) NaCl public key used to generate signature
-- sha256 - 256-bit (32 byte) sha256 sum of the entry data
+- blake3 - 256-bit (32 byte) blake3 sum of the entry data
 - count - 64-bit count of entry structs, which immediately follow
 
 #### Entry Struct
 
 The size of the entry struct is 308 bytes. All fields are packed.
 
-- sha256 - 256-bit (32 byte) sha256 sum of the file data
+- blake3 - 256-bit (32 byte) blake3 sum of the file data
 - offset - 64-bit little endian offset of file data in the data portion
 - size - 64-bit little endian size in bytes of the file data in the data portion
 - mode - 32-bit Unix permissions (user, group, other with read, write, execute)
@@ -55,7 +55,7 @@ The size of the entry struct is 308 bytes. All fields are packed.
 The data portion is used to look up file data only. It could be compressed to
 produce a .pkgar_data.gz file, for example. It can be removed after the install
 is completed. It is possible for it to contain holes, invalid data, or
-unreferenced data - so long as the sha256 of files identified in the header are
+unreferenced data - so long as the blake3 of files identified in the header are
 still valid. This data should be removed when an archive is rebuilt.
 
 ### Operation
@@ -63,6 +63,6 @@ still valid. This data should be removed when an archive is rebuilt.
 A reader should first verify the header portion's signature matches that of a
 valid package source. Then, they should locate the entry for the file of
 interest. If desired, they can check if a locally cached file matches the
-referenced sha256. If this is not the case, they may access the data portion and
+referenced blake3. If this is not the case, they may access the data portion and
 verify that the data at the offset and length in the header entry matches the
-sha256. In that case, the data may be retrieved.
+blake3. In that case, the data may be retrieved.

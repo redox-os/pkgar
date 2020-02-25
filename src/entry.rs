@@ -5,8 +5,8 @@ use plain::Plain;
 #[derive(Clone, Copy)]
 #[repr(packed)]
 pub struct Entry {
-    /// SHA-256 sum of the file data
-    pub sha256: [u8; 32],
+    /// Blake3 sum of the file data
+    pub blake3: [u8; 32],
     /// Offset of file data in the data portion
     pub offset: u64,
     /// Size in bytes of the file data in the data portion

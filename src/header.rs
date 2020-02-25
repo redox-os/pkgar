@@ -3,7 +3,6 @@
 use core::convert::TryFrom;
 use core::mem;
 use plain::Plain;
-use sha2::{Digest, Sha256};
 
 use crate::{Entry, Error, PublicKey};
 
@@ -14,8 +13,8 @@ pub struct Header {
     pub signature: [u8; 64],
     /// NaCl public key used to generate signature
     pub public_key: [u8; 32],
-    /// SHA-256 sum of entry data
-    pub sha256: [u8; 32],
+    /// Blake3 sum of entry data
+    pub blake3: [u8; 32],
     /// Count of Entry structs, which immediately follow
     pub count: u64,
 }
@@ -72,7 +71,7 @@ impl Header {
             .ok_or(Error::Overflow)
     }
 
-    /// Parse entries from raw entries data and verify using sha256
+    /// Parse entries from raw entries data and verify using blake3
     pub fn entries<'a>(&self, data: &'a [u8]) -> Result<&'a [Entry], Error> {
         let entries_size = usize::try_from(self.entries_size()?)
             .map_err(Error::TryFromInt)?;
@@ -80,14 +79,15 @@ impl Header {
         let entries_data = data.get(..entries_size)
             .ok_or(Error::Plain(plain::Error::TooShort))?;
 
-        let sha256 = {
-            let mut hasher = Sha256::new();
-            hasher.input(&entries_data);
-            hasher.result()
+        let hash = {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update_with_join::<blake3::join::RayonJoin>(&entries_data);
+            hasher.finalize()
         };
 
-        if &self.sha256 != sha256.as_slice() {
-            return Err(Error::InvalidSha256);
+
+        if &self.blake3 != hash.as_bytes() {
+            return Err(Error::InvalidBlake3);
         }
 
         unsafe { Self::entries_unchecked(entries_data) }

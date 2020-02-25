@@ -1,6 +1,6 @@
 [package]
 name = "pkgar"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Jeremy Soller <jackpot51@gmail.com>"]
 edition = "2018"
 
@@ -26,9 +26,10 @@ optional = true
 version = "0.5.1"
 default-features = false
 
-[dependencies.sha2]
-version = "0.8.0"
+[dependencies.blake3]
+version = "0.2.1"
 default-features = false
+features = ["rayon"]
 
 [features]
 default = ["clap", "rand", "std"]
