@@ -394,7 +394,7 @@ fn main() {
                 help_print();
             } else if version {
                 version_print();
-            } else if !help && !version {
+            } else {
                 help_print();
             }
         },
