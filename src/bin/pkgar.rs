@@ -463,7 +463,7 @@ For more information try {}", Red.paint("Error:"), e, Yellow.paint("USAGE:"), Gr
                 eprintln!("{} {}
 
 {}
-    pkgar create <folder> --secret <secret> --secret <secret>
+    pkgar keygen <folder> --secret <secret> --secret <secret>
 
 For more information try {}", Red.paint("Error:"), e, Yellow.paint("USAGE:"), Green.paint("--help"));                
                 std::process::exit(1);
@@ -475,7 +475,7 @@ For more information try {}", Red.paint("Error:"), e, Yellow.paint("USAGE:"), Gr
                 eprintln!("{} {}
 
 {}
-    pkgar create <folder> --public <public> --file <file>\n\n\
+    pkgar list <folder> --public <public> --file <file>\n\n\
 
 For more information try {}", Red.paint("Error:"), e, Yellow.paint("USAGE:"), Green.paint("--help"));                   
                 std::process::exit(1);
