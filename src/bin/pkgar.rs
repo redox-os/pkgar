@@ -7,8 +7,14 @@ use std::fs;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::mem;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{symlink, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path};
+
+// This ensures that all platforms use the same mode defines
+const MODE_PERM: u32 = 0o7777;
+const MODE_KIND: u32 = 0o170000;
+const MODE_FILE: u32 = 0o100000;
+const MODE_SYMLINK: u32 = 0o120000;
 
 fn folder_entries<P, Q>(base: P, path: Q, entries: &mut Vec<Entry>) -> io::Result<()>
     where P: AsRef<Path>, Q: AsRef<Path>
@@ -46,11 +52,23 @@ fn folder_entries<P, Q>(base: P, path: Q, entries: &mut Vec<Entry>) -> io::Resul
             }
             path_bytes[..relative_bytes.len()].copy_from_slice(relative_bytes);
 
+            let file_type = metadata.file_type();
+            let mut mode = metadata.permissions().mode() & MODE_PERM;
+            if file_type.is_file() {
+                mode |= MODE_FILE;
+            } else if file_type.is_symlink() {
+                mode |= MODE_SYMLINK;
+            } else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("Unsupported entry at {:?}: {:?}", relative, metadata),
+                ));
+            }
             entries.push(Entry {
                 blake3: [0; 32],
                 offset: 0,
                 size: metadata.len(),
-                mode: metadata.permissions().mode(),
+                mode,
                 path: path_bytes,
             });
         }
@@ -100,7 +118,7 @@ fn create(secret_path: &str, archive_path: &str, folder: &str) {
     for entry in &mut entries {
         entry.offset = data_size;
         data_size = data_size.checked_add(entry.size)
-            .expect("overflow when calculating entry offset");
+            .expect("overflow when calculating data size");
 
         println!("{}: {:?}", { entry.offset }, ::std::str::from_utf8(entry.path()));
     }
@@ -118,22 +136,44 @@ fn create(secret_path: &str, archive_path: &str, folder: &str) {
     for entry in &mut entries {
         let relative = Path::new(OsStr::from_bytes(entry.path()));
         let path = Path::new(folder).join(relative);
-        let mut entry_file = fs::OpenOptions::new()
-            .read(true)
-            .open(path)
-            .expect("failed to open entry file");
 
         let mut hasher = blake3::Hasher::new();
-        loop {
-            let count = entry_file.read(&mut buf)
-                .expect("failed to read entry file");
-            if count == 0 {
-                break;
+        let mode_kind = entry.mode & MODE_KIND;
+        match mode_kind {
+            MODE_FILE => {
+                let mut entry_file = fs::OpenOptions::new()
+                    .read(true)
+                    .open(path)
+                    .expect("failed to open entry file");
+
+                let mut total = 0;
+                loop {
+                    let count = entry_file.read(&mut buf)
+                        .expect("failed to read entry file");
+                    if count == 0 {
+                        break;
+                    }
+                    total += count as u64;
+                    //TODO: Progress
+                    archive_file.write_all(&buf[..count])
+                        .expect("failed to write entry data");
+                    hasher.update_with_join::<blake3::join::RayonJoin>(&buf[..count]);
+                }
+                assert_eq!(total, { entry.size });
+            },
+            MODE_SYMLINK => {
+                let destination = fs::read_link(path)
+                    .expect("failed to read entry link");
+                let data = destination.as_os_str().as_bytes();
+                assert_eq!(data.len() as u64, { entry.size });
+
+                archive_file.write_all(&data)
+                    .expect("failed to write entry data");
+                hasher.update_with_join::<blake3::join::RayonJoin>(&data);
+            },
+            _ => {
+                panic!("Unsupported mode {:#o}", { entry.mode });
             }
-            //TODO: Progress
-            archive_file.write_all(&buf[..count])
-                .expect("failed to write entry data");
-            hasher.update_with_join::<blake3::join::RayonJoin>(&buf[..count]);
         }
         entry.blake3.copy_from_slice(hasher.finalize().as_bytes());
 
@@ -142,6 +182,8 @@ fn create(secret_path: &str, archive_path: &str, folder: &str) {
         });
     }
     header.blake3.copy_from_slice(header_hasher.finalize().as_bytes());
+
+    //TODO: ensure file size matches
 
     // Calculate signature
     let unsigned = header.clone();
@@ -246,15 +288,29 @@ fn extract(public_path: &str, archive_path: &str, folder: &str) {
                 .expect("failed to create entry parent directory");
         }
 
-        fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(entry.mode)
-            .open(entry_path)
-            .expect("failed to create entry file")
-            .write_all(&data)
-            .expect("failed to write entry file");
+        let mode_kind = entry.mode & MODE_KIND;
+        let mode_perm = entry.mode & MODE_PERM;
+        match mode_kind {
+            MODE_FILE => {
+                fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .mode(mode_perm)
+                    .open(entry_path)
+                    .expect("failed to create entry file")
+                    .write_all(&data)
+                    .expect("failed to write entry file");
+            },
+            MODE_SYMLINK => {
+                let os_str: &OsStr = OsStrExt::from_bytes(data.as_slice());
+                symlink(os_str, entry_path)
+                    .expect("failed to create entry link");
+            },
+            _ => {
+                panic!("Unsupported mode {:#o}", { entry.mode });
+            }
+        }
     }
 }
 
