@@ -10,6 +10,9 @@ mod error;
 mod header;
 mod key;
 
+#[cfg(feature = "std")]
+pub mod bin;
+
 #[cfg(test)]
 mod tests {
     use core::mem;
