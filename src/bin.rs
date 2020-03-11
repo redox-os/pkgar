@@ -88,8 +88,6 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) {
         SecretKey::from_data(data)
     };
 
-    println!("create {} from {}", archive_path, folder);
-
     //TODO: move functions to library
 
     let mut archive_file = fs::OpenOptions::new()
@@ -118,8 +116,6 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) {
         entry.offset = data_size;
         data_size = data_size.checked_add(entry.size)
             .expect("overflow when calculating data size");
-
-        println!("{}: {:?}", { entry.offset }, ::std::str::from_utf8(entry.path()));
     }
 
     // Seek to data offset
@@ -218,8 +214,6 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) {
             .expect("failed to read public key file");
         PublicKey::from_data(data)
     };
-
-    println!("extract {} to {}", archive_path, folder);
 
     let mut archive_file = fs::OpenOptions::new()
         .read(true)
