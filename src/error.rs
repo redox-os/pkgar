@@ -9,4 +9,6 @@ pub enum Error {
     Plain(plain::Error),
     Overflow,
     TryFromInt(core::num::TryFromIntError),
+    #[cfg(feature = "rand")]
+    Rand(rand_core::Error),
 }

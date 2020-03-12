@@ -76,15 +76,15 @@ fn folder_entries<P, Q>(base: P, path: Q, entries: &mut Vec<Entry>) -> io::Resul
     Ok(())
 }
 
-pub fn create(secret_path: &str, archive_path: &str, folder: &str) {
+pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(), Error> {
     let secret_key = {
         let mut data = [0; 64];
         fs::OpenOptions::new()
             .read(true)
             .open(secret_path)
-            .expect("failed to open secret key file")
+            .map_err(Error::Io)?
             .read_exact(&mut data)
-            .expect("failed to read secret key file");
+            .map_err(Error::Io)?;
         SecretKey::from_data(data)
     };
 
@@ -95,12 +95,12 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) {
         .create(true)
         .truncate(true)
         .open(archive_path)
-        .expect("failed to create archive file");
+        .map_err(Error::Io)?;
 
     // Create a list of entries
     let mut entries = Vec::new();
     folder_entries(folder, folder, &mut entries)
-        .expect("failed to read folder");
+        .map_err(Error::Io)?;
 
     // Create initial header
     let mut header = Header {
@@ -115,14 +115,13 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) {
     for entry in &mut entries {
         entry.offset = data_size;
         data_size = data_size.checked_add(entry.size)
-            .expect("overflow when calculating data size");
+            .ok_or(Error::Overflow)?;
     }
 
     // Seek to data offset
-    let data_offset = header.total_size()
-        .expect("overflow when calculating data offset");
+    let data_offset = header.total_size()?;
     archive_file.seek(SeekFrom::Start(data_offset as u64))
-        .expect("failed to seek to data offset");
+        .map_err(Error::Io)?;
     //TODO: fallocate data_offset + data_size
 
     // Stream each file, writing data and calculating b3sums
@@ -139,35 +138,38 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) {
                 let mut entry_file = fs::OpenOptions::new()
                     .read(true)
                     .open(path)
-                    .expect("failed to open entry file");
+                    .map_err(Error::Io)?;
 
                 let mut total = 0;
                 loop {
                     let count = entry_file.read(&mut buf)
-                        .expect("failed to read entry file");
+                        .map_err(Error::Io)?;
                     if count == 0 {
                         break;
                     }
                     total += count as u64;
                     //TODO: Progress
                     archive_file.write_all(&buf[..count])
-                        .expect("failed to write entry data");
+                        .map_err(Error::Io)?;
                     hasher.update_with_join::<blake3::join::RayonJoin>(&buf[..count]);
                 }
                 assert_eq!(total, { entry.size });
             },
             MODE_SYMLINK => {
                 let destination = fs::read_link(path)
-                    .expect("failed to read entry link");
+                    .map_err(Error::Io)?;
                 let data = destination.as_os_str().as_bytes();
                 assert_eq!(data.len() as u64, { entry.size });
 
                 archive_file.write_all(&data)
-                    .expect("failed to write entry data");
+                    .map_err(Error::Io)?;
                 hasher.update_with_join::<blake3::join::RayonJoin>(&data);
             },
             _ => {
-                panic!("Unsupported mode {:#o}", { entry.mode });
+                return Err(Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("Unsupported mode {:#o}", { entry.mode })
+                )));
             }
         }
         entry.blake3.copy_from_slice(hasher.finalize().as_bytes());
@@ -190,70 +192,68 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) {
 
     // Write archive header
     archive_file.seek(SeekFrom::Start(0))
-        .expect("failed to seek to start");
+        .map_err(Error::Io)?;
     archive_file.write_all(unsafe {
         plain::as_bytes(&header)
-    }).expect("failed to write header");
+    }).map_err(Error::Io)?;
 
     // Write each entry header
     for entry in &entries {
         archive_file.write_all(unsafe {
             plain::as_bytes(entry)
-        }).expect("failed to write entry header");
+        }).map_err(Error::Io)?;
     }
+
+    Ok(())
 }
 
-pub fn extract(public_path: &str, archive_path: &str, folder: &str) {
+pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<(), Error> {
     let public_key = {
         let mut data = [0; 32];
         fs::OpenOptions::new()
             .read(true)
             .open(public_path)
-            .expect("failed to open public key file")
+            .map_err(Error::Io)?
             .read_exact(&mut data)
-            .expect("failed to read public key file");
+            .map_err(Error::Io)?;
         PublicKey::from_data(data)
     };
 
     let mut archive_file = fs::OpenOptions::new()
         .read(true)
         .open(archive_path)
-        .expect("failed to open archive file");
+        .map_err(Error::Io)?;
 
     // Read header first
     let mut header_data = [0; mem::size_of::<Header>()];
     archive_file.read_exact(&mut header_data)
-        .expect("failed to read archive file");
-    let header = Header::new(&header_data, &public_key)
-        .expect("failed to parse header");
+        .map_err(Error::Io)?;
+    let header = Header::new(&header_data, &public_key)?;
 
     // Read entries next
     let entries_size = header.entries_size()
-        .and_then(|x| usize::try_from(x).map_err(Error::TryFromInt))
-        .expect("overflow when calculating entries size");
+        .and_then(|x| usize::try_from(x).map_err(Error::TryFromInt))?;
     let mut entries_data = vec![0; entries_size];
     archive_file.read_exact(&mut entries_data)
-        .expect("failed to read archive file");
-    let entries = header.entries(&entries_data)
-        .expect("failed to parse entries");
+        .map_err(Error::Io)?;
+    let entries = header.entries(&entries_data)?;
 
     // TODO: Validate that all entries can be installed, before installing
 
-    let data_offset = header.total_size()
-        .expect("overflow when calculating data offset");
+    let data_offset = header.total_size()?;
     let folder_path = Path::new(folder);
     for entry in entries {
         let offset = data_offset.checked_add(entry.offset)
-            .expect("overflow when calculating entry offset");
+            .ok_or(Error::Overflow)?;
         archive_file.seek(SeekFrom::Start(offset))
-            .expect("failed to seek to entry offset");
+            .map_err(Error::Io)?;
 
         // TODO: Do not read entire file into memory
         let size = usize::try_from(entry.size)
-            .expect("overflow when calculating entry size");
+            .map_err(Error::TryFromInt)?;
         let mut data = vec![0; size];
         archive_file.read_exact(&mut data)
-            .expect("failed to read entry data");
+            .map_err(Error::Io)?;
 
         let hash = {
             let mut hasher = blake3::Hasher::new();
@@ -262,23 +262,31 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) {
         };
 
         if &entry.blake3 != hash.as_bytes() {
-            panic!("failed to verify entry data");
+            return Err(Error::InvalidBlake3);
         }
 
         let relative = Path::new(OsStr::from_bytes(entry.path()));
         for component in relative.components() {
             match component {
                 Component::Normal(_) => (),
-                invalid => panic!("entry path contains invalid component: {:?}", invalid),
+                invalid => {
+                    return Err(Error::Io(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("entry path contains invalid component: {:?}", invalid)
+                    )));
+                }
             }
         }
         let entry_path = folder_path.join(relative);
         if ! entry_path.starts_with(&folder_path) {
-            panic!("entry path escapes from folder");
+            return Err(Error::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("entry path escapes from folder: {:?}", relative)
+            )));
         }
         if let Some(parent) = entry_path.parent() {
             fs::create_dir_all(parent)
-                .expect("failed to create entry parent directory");
+                .map_err(Error::Io)?;
         }
 
         let mode_kind = entry.mode & MODE_KIND;
@@ -291,37 +299,42 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) {
                     .truncate(true)
                     .mode(mode_perm)
                     .open(entry_path)
-                    .expect("failed to create entry file")
+                    .map_err(Error::Io)?
                     .write_all(&data)
-                    .expect("failed to write entry file");
+                    .map_err(Error::Io)?;
             },
             MODE_SYMLINK => {
                 let os_str: &OsStr = OsStrExt::from_bytes(data.as_slice());
                 symlink(os_str, entry_path)
-                    .expect("failed to create entry link");
+                    .map_err(Error::Io)?;
             },
             _ => {
-                panic!("Unsupported mode {:#o}", { entry.mode });
+                return Err(Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Unsupported mode {:#o}", { entry.mode })
+                )));
             }
         }
     }
+
+    Ok(())
 }
 
 #[cfg(feature = "rand")]
-pub fn keygen(secret_path: &str, public_path: &str) {
+pub fn keygen(secret_path: &str, public_path: &str) -> Result<(), Error> {
     use rand::rngs::OsRng;
 
     let secret_key = SecretKey::new(&mut OsRng)
-        .expect("failed to generate secret key");
+        .map_err(Error::Rand)?;
     fs::OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
         .mode(0o400)
         .open(secret_path)
-        .expect("failed to create secret key file")
+        .map_err(Error::Io)?
         .write_all(secret_key.as_data())
-        .expect("failed to write secret key file");
+        .map_err(Error::Io)?;
 
     let public_key = secret_key.public_key();
     fs::OpenOptions::new()
@@ -330,47 +343,48 @@ pub fn keygen(secret_path: &str, public_path: &str) {
         .truncate(true)
         .mode(0o400)
         .open(public_path)
-        .expect("failed to create public key file")
+        .map_err(Error::Io)?
         .write_all(public_key.as_data())
-        .expect("failed to write public key file");
+        .map_err(Error::Io)?;
+
+    Ok(())
 }
 
-pub fn list(public_path: &str, archive_path: &str) {
+pub fn list(public_path: &str, archive_path: &str) -> Result<(), Error> {
     let public_key = {
         let mut data = [0; 32];
         fs::OpenOptions::new()
             .read(true)
             .open(public_path)
-            .expect("failed to open public key file")
+            .map_err(Error::Io)?
             .read_exact(&mut data)
-            .expect("failed to read public key file");
+            .map_err(Error::Io)?;
         PublicKey::from_data(data)
     };
 
     let mut archive_file = fs::OpenOptions::new()
         .read(true)
         .open(archive_path)
-        .expect("failed to open archive file");
+        .map_err(Error::Io)?;
 
     // Read header first
     let mut header_data = [0; mem::size_of::<Header>()];
     archive_file.read_exact(&mut header_data)
-        .expect("failed to read archive file");
-    let header = Header::new(&header_data, &public_key)
-        .expect("failed to parse header");
+        .map_err(Error::Io)?;
+    let header = Header::new(&header_data, &public_key)?;
 
     // Read entries next
     let entries_size = header.entries_size()
-        .and_then(|x| usize::try_from(x).map_err(Error::TryFromInt))
-        .expect("overflow when calculating entries size");
+        .and_then(|x| usize::try_from(x).map_err(Error::TryFromInt))?;
     let mut entries_data = vec![0; entries_size];
     archive_file.read_exact(&mut entries_data)
-        .expect("failed to read archive file");
-    let entries = header.entries(&entries_data)
-        .expect("failed to parse entries");
+        .map_err(Error::Io)?;
+    let entries = header.entries(&entries_data)?;
 
     for entry in entries {
         let relative = Path::new(OsStr::from_bytes(entry.path()));
         println!("{}", relative.display());
     }
+
+    Ok(())
 }
