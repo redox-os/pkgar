@@ -7,7 +7,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{symlink, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path};
 
-use crate::{Entry, Error, Header, PublicKey, SecretKey};
+use crate::{Entry, Error, Header, Package, PackageSrc, PublicKey, SecretKey};
 
 // This ensures that all platforms use the same mode defines
 const MODE_PERM: u32 = 0o7777;
@@ -224,36 +224,21 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<()
         .open(archive_path)
         .map_err(Error::Io)?;
 
-    // Read header first
-    let mut header_data = [0; mem::size_of::<Header>()];
-    archive_file.read_exact(&mut header_data)
-        .map_err(Error::Io)?;
-    let header = Header::new(&header_data, &public_key)?;
-
-    // Read entries next
-    let entries_size = header.entries_size()
-        .and_then(|x| usize::try_from(x).map_err(Error::TryFromInt))?;
-    let mut entries_data = vec![0; entries_size];
-    archive_file.read_exact(&mut entries_data)
-        .map_err(Error::Io)?;
-    let entries = header.entries(&entries_data)?;
+    let mut package = Package::new(
+        PackageSrc::File(&mut archive_file),
+        &public_key
+    )?;
+    let entries = package.entries()?;
 
     // TODO: Validate that all entries can be installed, before installing
 
-    let data_offset = header.total_size()?;
     let folder_path = Path::new(folder);
     for entry in entries {
-        let offset = data_offset.checked_add(entry.offset)
-            .ok_or(Error::Overflow)?;
-        archive_file.seek(SeekFrom::Start(offset))
-            .map_err(Error::Io)?;
-
         // TODO: Do not read entire file into memory
-        let size = usize::try_from(entry.size)
+        let size = usize::try_from(entry.size())
             .map_err(Error::TryFromInt)?;
         let mut data = vec![0; size];
-        archive_file.read_exact(&mut data)
-            .map_err(Error::Io)?;
+        entry.read_at(&mut package, 0, &mut data)?;
 
         let hash = {
             let mut hasher = blake3::Hasher::new();
@@ -261,7 +246,7 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<()
             hasher.finalize()
         };
 
-        if &entry.blake3 != hash.as_bytes() {
+        if &entry.hash() != hash.as_bytes() {
             return Err(Error::InvalidBlake3);
         }
 
@@ -289,8 +274,9 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<()
                 .map_err(Error::Io)?;
         }
 
-        let mode_kind = entry.mode & MODE_KIND;
-        let mode_perm = entry.mode & MODE_PERM;
+        let mode = entry.mode();
+        let mode_kind = mode & MODE_KIND;
+        let mode_perm = mode & MODE_PERM;
         match mode_kind {
             MODE_FILE => {
                 fs::OpenOptions::new()
@@ -311,7 +297,7 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<()
             _ => {
                 return Err(Error::Io(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("Unsupported mode {:#o}", { entry.mode })
+                    format!("Unsupported mode {:#o}", mode)
                 )));
             }
         }
