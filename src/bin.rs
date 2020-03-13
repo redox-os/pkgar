@@ -1,3 +1,4 @@
+use blake3::Hash;
 use std::convert::TryFrom;
 use std::ffi::OsStr;
 use std::fs;
@@ -14,6 +15,24 @@ const MODE_PERM: u32 = 0o7777;
 const MODE_KIND: u32 = 0o170000;
 const MODE_FILE: u32 = 0o100000;
 const MODE_SYMLINK: u32 = 0o120000;
+
+fn copy_hash<R: Read, W: Write>(mut read: R, mut write: W, buf: &mut [u8]) -> Result<(u64, Hash), Error> {
+    let mut hasher = blake3::Hasher::new();
+    let mut total = 0;
+    loop {
+        let count = read.read(buf)
+            .map_err(Error::Io)?;
+        if count == 0 {
+            break;
+        }
+        total += count as u64;
+        //TODO: Progress
+        write.write_all(&buf[..count])
+            .map_err(Error::Io)?;
+        hasher.update_with_join::<blake3::join::RayonJoin>(&buf[..count]);
+    }
+    Ok((total, hasher.finalize()))
+}
 
 fn folder_entries<P, Q>(base: P, path: Q, entries: &mut Vec<Entry>) -> io::Result<()>
     where P: AsRef<Path>, Q: AsRef<Path>
@@ -131,39 +150,20 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
         let relative = Path::new(OsStr::from_bytes(entry.path()));
         let path = Path::new(folder).join(relative);
 
-        let mut hasher = blake3::Hasher::new();
         let mode_kind = entry.mode & MODE_KIND;
-        match mode_kind {
+        let (total, hash) = match mode_kind {
             MODE_FILE => {
                 let mut entry_file = fs::OpenOptions::new()
                     .read(true)
                     .open(path)
                     .map_err(Error::Io)?;
-
-                let mut total = 0;
-                loop {
-                    let count = entry_file.read(&mut buf)
-                        .map_err(Error::Io)?;
-                    if count == 0 {
-                        break;
-                    }
-                    total += count as u64;
-                    //TODO: Progress
-                    archive_file.write_all(&buf[..count])
-                        .map_err(Error::Io)?;
-                    hasher.update_with_join::<blake3::join::RayonJoin>(&buf[..count]);
-                }
-                assert_eq!(total, { entry.size });
+                copy_hash(&mut entry_file, &mut archive_file, &mut buf)?
             },
             MODE_SYMLINK => {
                 let destination = fs::read_link(path)
                     .map_err(Error::Io)?;
-                let data = destination.as_os_str().as_bytes();
-                assert_eq!(data.len() as u64, { entry.size });
-
-                archive_file.write_all(&data)
-                    .map_err(Error::Io)?;
-                hasher.update_with_join::<blake3::join::RayonJoin>(&data);
+                let mut data = destination.as_os_str().as_bytes();
+                copy_hash(&mut data, &mut archive_file, &mut buf)?
             },
             _ => {
                 return Err(Error::Io(io::Error::new(
@@ -171,8 +171,10 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
                     format!("Unsupported mode {:#o}", { entry.mode })
                 )));
             }
-        }
-        entry.blake3.copy_from_slice(hasher.finalize().as_bytes());
+        };
+        //TODO: do not assert
+        assert_eq!(total, { entry.size });
+        entry.blake3.copy_from_slice(hash.as_bytes());
 
         header_hasher.update_with_join::<blake3::join::RayonJoin>(unsafe {
             plain::as_bytes(entry)
@@ -233,23 +235,9 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<()
     // TODO: Validate that all entries can be installed, before installing
 
     let folder_path = Path::new(folder);
+    let mut buf = vec![0; 4 * 1024 * 1024];
+    let mut renames = Vec::new();
     for entry in entries {
-        // TODO: Do not read entire file into memory
-        let size = usize::try_from(entry.size())
-            .map_err(Error::TryFromInt)?;
-        let mut data = vec![0; size];
-        entry.read_at(&mut package, 0, &mut data)?;
-
-        let hash = {
-            let mut hasher = blake3::Hasher::new();
-            hasher.update_with_join::<blake3::join::RayonJoin>(&data);
-            hasher.finalize()
-        };
-
-        if &entry.hash() != hash.as_bytes() {
-            return Err(Error::InvalidBlake3);
-        }
-
         let relative = Path::new(OsStr::from_bytes(entry.path()));
         for component in relative.components() {
             match component {
@@ -262,6 +250,7 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<()
                 }
             }
         }
+
         let entry_path = folder_path.join(relative);
         if ! entry_path.starts_with(&folder_path) {
             return Err(Error::Io(io::Error::new(
@@ -269,30 +258,42 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<()
                 format!("entry path escapes from folder: {:?}", relative)
             )));
         }
-        if let Some(parent) = entry_path.parent() {
+
+        let entry_hash = Hash::from(entry.hash());
+        let temp_name = format!(".pkgar.{}", entry_hash.to_hex());
+        let temp_path = if let Some(parent) = entry_path.parent() {
             fs::create_dir_all(parent)
                 .map_err(Error::Io)?;
-        }
+            parent.join(temp_name)
+        } else {
+            return Err(Error::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("entry path has no parent: {:?}", entry_path)
+            )));
+        };
 
         let mode = entry.mode();
         let mode_kind = mode & MODE_KIND;
         let mode_perm = mode & MODE_PERM;
-        match mode_kind {
+        let (_total, hash) = match mode_kind {
             MODE_FILE => {
-                fs::OpenOptions::new()
+                let mut temp_file = fs::OpenOptions::new()
                     .write(true)
-                    .create(true)
-                    .truncate(true)
+                    .create_new(true)
                     .mode(mode_perm)
-                    .open(entry_path)
-                    .map_err(Error::Io)?
-                    .write_all(&data)
+                    .open(&temp_path)
                     .map_err(Error::Io)?;
+                entry.copy_hash(&mut package, &mut temp_file, &mut buf)?
             },
             MODE_SYMLINK => {
+                let size = usize::try_from(entry.size())
+                    .map_err(Error::TryFromInt)?;
+                let mut data = vec![0; size];
+                let (total, hash) = entry.copy_hash(&mut package, &mut data, &mut buf)?;
                 let os_str: &OsStr = OsStrExt::from_bytes(data.as_slice());
-                symlink(os_str, entry_path)
+                symlink(os_str, &temp_path)
                     .map_err(Error::Io)?;
+                (total, hash)
             },
             _ => {
                 return Err(Error::Io(io::Error::new(
@@ -300,7 +301,19 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<()
                     format!("Unsupported mode {:#o}", mode)
                 )));
             }
+        };
+
+        if entry_hash != hash {
+            let _ = fs::remove_file(temp_path);
+            return Err(Error::InvalidBlake3);
         }
+
+        renames.push((temp_path, entry_path));
+    }
+
+    for (temp_path, entry_path) in renames {
+        fs::rename(&temp_path, &entry_path)
+            .map_err(Error::Io)?;
     }
 
     Ok(())

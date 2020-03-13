@@ -1,3 +1,4 @@
+use blake3::Hash;
 use core::convert::TryFrom;
 use core::mem;
 
@@ -10,25 +11,27 @@ pub enum PackageSrc<'a> {
 }
 
 impl<'a> PackageSrc<'a> {
-    pub fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<(), Error> {
+    pub fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, Error> {
         match self {
             #[cfg(feature = "std")]
             Self::File(file) => {
                 use std::io::{Read, Seek, SeekFrom};
                 file.seek(SeekFrom::Start(offset)).map_err(Error::Io)?;
-                file.read_exact(buf).map_err(Error::Io)?;
+                file.read(buf).map_err(Error::Io)
             },
             Self::Slice(slice) => {
                 let start = usize::try_from(offset).map_err(Error::TryFromInt)?;
-                let end = start.checked_add(buf.len()).ok_or(Error::Overflow)?;
+                if start >= slice.len() {
+                    return Ok(0);
+                }
+                let mut end = start.checked_add(buf.len()).ok_or(Error::Overflow)?;
                 if end > slice.len() {
-                    //TODO: error type
-                    return Err(Error::InvalidData);
+                    end = slice.len();
                 }
                 buf.copy_from_slice(&slice[start..end]);
+                Ok(end.checked_sub(start).unwrap())
             },
         }
-        Ok(())
     }
 }
 
@@ -83,8 +86,8 @@ pub struct PackageEntry {
 }
 
 impl PackageEntry {
-    pub fn hash(&self) -> &[u8] {
-        &self.entry.blake3
+    pub fn hash(&self) -> [u8; 32] {
+        self.entry.blake3
     }
 
     pub fn mode(&self) -> u32 {
@@ -99,12 +102,15 @@ impl PackageEntry {
         self.entry.size
     }
 
-    pub fn read_at(&self, package: &mut Package, offset: u64, buf: &mut [u8]) -> Result<(), Error> {
-        let end = offset.checked_add(buf.len() as u64).ok_or(Error::Overflow)?;
-        if end > self.entry.size {
-            //TODO: error type
-            return Err(Error::InvalidData);
+    pub fn read_at(&self, package: &mut Package, offset: u64, buf: &mut [u8]) -> Result<usize, Error> {
+        if offset >= self.entry.size {
+            return Ok(0);
         }
+        let mut end = offset.checked_add(buf.len() as u64).ok_or(Error::Overflow)?;
+        if end > self.entry.size {
+            end = self.entry.size;
+        }
+        let buf_len = usize::try_from(end.checked_sub(offset).unwrap()).map_err(Error::TryFromInt)?;
         package.src.read_at(
             // Offset to first entry data
             package.header.total_size()?
@@ -112,7 +118,25 @@ impl PackageEntry {
             .checked_add(self.entry.offset).ok_or(Error::Overflow)?
             // Offset into entry data
             .checked_add(offset).ok_or(Error::Overflow)?,
-            buf
+            &mut buf[..buf_len]
         )
+    }
+
+    #[cfg(feature = "std")]
+    pub fn copy_hash<W: std::io::Write>(&self, package: &mut Package, mut write: W, buf: &mut [u8]) -> Result<(u64, Hash), Error> {
+        let mut hasher = blake3::Hasher::new();
+        let mut total = 0;
+        loop {
+            let count = self.read_at(package, total, buf)?;
+            if count == 0 {
+                break;
+            }
+            total += count as u64;
+            //TODO: Progress
+            write.write_all(&buf[..count])
+                .map_err(Error::Io)?;
+            hasher.update_with_join::<blake3::join::RayonJoin>(&buf[..count]);
+        }
+        Ok((total, hasher.finalize()))
     }
 }
