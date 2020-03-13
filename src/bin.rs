@@ -3,7 +3,6 @@ use std::convert::TryFrom;
 use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom, Write};
-use std::mem;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{symlink, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path};
@@ -172,8 +171,12 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
                 )));
             }
         };
-        //TODO: do not assert
-        assert_eq!(total, { entry.size });
+        if total != { entry.size } {
+            return Err(Error::Io(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Copied {} instead of {}", total, { entry.size })
+            )));
+        }
         entry.blake3.copy_from_slice(hash.as_bytes());
 
         header_hasher.update_with_join::<blake3::join::RayonJoin>(unsafe {
@@ -275,7 +278,7 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<()
         let mode = entry.mode();
         let mode_kind = mode & MODE_KIND;
         let mode_perm = mode & MODE_PERM;
-        let (_total, hash) = match mode_kind {
+        let (total, hash) = match mode_kind {
             MODE_FILE => {
                 //TODO: decide what to do when temp files are left over
                 let mut temp_file = fs::OpenOptions::new()
@@ -303,7 +306,12 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<()
                 )));
             }
         };
-
+        if total != entry.size() {
+            return Err(Error::Io(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Copied {} instead of {}", total, entry.size())
+            )));
+        }
         if entry_hash != hash {
             let _ = fs::remove_file(temp_path);
             return Err(Error::InvalidBlake3);
