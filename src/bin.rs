@@ -277,6 +277,7 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<()
         let mode_perm = mode & MODE_PERM;
         let (_total, hash) = match mode_kind {
             MODE_FILE => {
+                //TODO: decide what to do when temp files are left over
                 let mut temp_file = fs::OpenOptions::new()
                     .write(true)
                     .create_new(true)
@@ -367,19 +368,11 @@ pub fn list(public_path: &str, archive_path: &str) -> Result<(), Error> {
         .map_err(Error::Io)?;
 
     // Read header first
-    let mut header_data = [0; mem::size_of::<Header>()];
-    archive_file.read_exact(&mut header_data)
-        .map_err(Error::Io)?;
-    let header = Header::new(&header_data, &public_key)?;
-
-    // Read entries next
-    let entries_size = header.entries_size()
-        .and_then(|x| usize::try_from(x).map_err(Error::TryFromInt))?;
-    let mut entries_data = vec![0; entries_size];
-    archive_file.read_exact(&mut entries_data)
-        .map_err(Error::Io)?;
-    let entries = header.entries(&entries_data)?;
-
+    let mut package = Package::new(
+        PackageSrc::File(&mut archive_file),
+        &public_key
+    )?;
+    let entries = package.entries()?;
     for entry in entries {
         let relative = Path::new(OsStr::from_bytes(entry.path()));
         println!("{}", relative.display());
