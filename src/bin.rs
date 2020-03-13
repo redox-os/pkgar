@@ -283,7 +283,8 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<()
                 //TODO: decide what to do when temp files are left over
                 let mut temp_file = fs::OpenOptions::new()
                     .write(true)
-                    .create_new(true)
+                    .create(true)
+                    .truncate(true)
                     .mode(mode_perm)
                     .open(&temp_path)
                     .map_err(Error::Io)?;
