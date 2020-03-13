@@ -1,5 +1,4 @@
 use blake3::Hash;
-use std::convert::TryFrom;
 use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom, Write};
