@@ -291,9 +291,7 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<()
                 entry.copy_hash(&mut package, &mut temp_file, &mut buf)?
             },
             MODE_SYMLINK => {
-                let size = usize::try_from(entry.size())
-                    .map_err(Error::TryFromInt)?;
-                let mut data = vec![0; size];
+                let mut data = Vec::new();
                 let (total, hash) = entry.copy_hash(&mut package, &mut data, &mut buf)?;
                 let os_str: &OsStr = OsStrExt::from_bytes(data.as_slice());
                 symlink(os_str, &temp_path)
