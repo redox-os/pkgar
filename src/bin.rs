@@ -262,7 +262,12 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<()
         }
 
         let entry_hash = Hash::from(entry.hash());
-        let temp_name = format!(".pkgar.{}", entry_hash.to_hex());
+        let temp_name = if let Some(file_name) = entry_path.file_name().and_then(|x| x.to_str())
+        {
+            format!(".pkgar.{}", file_name)
+        } else {
+            format!(".pkgar.{}", entry_hash.to_hex())
+        };
         let temp_path = if let Some(parent) = entry_path.parent() {
             fs::create_dir_all(parent)
                 .map_err(Error::Io)?;
