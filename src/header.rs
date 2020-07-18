@@ -29,11 +29,6 @@ impl Header {
         let signed = data.get(..mem::size_of::<Header>())
             .ok_or(Error::Plain(plain::Error::TooShort))?;
 
-        // Verify signature and retrieve verified data
-        //let mut verified = [0; mem::size_of::<Header>()];
-        //let count = sodalite::sign_attached_open(&mut verified, signed, public_key.as_data())
-        //    .map_err(|_err| Error::InvalidSignature)?;
-
         let verified = sign::verify(signed, public_key)
             .map_err(|_err| Error::InvalidSignature)?;
 
