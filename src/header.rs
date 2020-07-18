@@ -3,8 +3,9 @@
 use core::convert::TryFrom;
 use core::mem;
 use plain::Plain;
+use sodiumoxide::crypto::sign::{self, PublicKey};
 
-use crate::{Entry, Error, PublicKey};
+use crate::{Entry, Error};
 
 #[derive(Clone, Copy)]
 #[repr(packed)]
@@ -28,19 +29,17 @@ impl Header {
         let signed = data.get(..mem::size_of::<Header>())
             .ok_or(Error::Plain(plain::Error::TooShort))?;
 
-        // Verify signature and retrieve verified data
-        let mut verified = [0; mem::size_of::<Header>()];
-        let count = sodalite::sign_attached_open(&mut verified, signed, public_key.as_data())
+        let verified = sign::verify(signed, public_key)
             .map_err(|_err| Error::InvalidSignature)?;
 
         // Check that verified data matches signed data after skipping the signature
-        if &verified[..count] != &signed[64..] {
+        if verified.as_slice() != &signed[64..] {
             return Err(Error::InvalidData);
         }
 
         // Create header from signed data and check that public key matches
         let header: &Header = unsafe { Header::new_unchecked(signed)? };
-        if &header.public_key != &public_key.as_data()[..] {
+        if &header.public_key != &public_key.as_ref()[..] {
             return Err(Error::InvalidKey);
         }
 
@@ -99,3 +98,4 @@ impl Header {
             .map_err(Error::Plain)
     }
 }
+

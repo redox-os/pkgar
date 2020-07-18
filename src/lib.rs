@@ -3,13 +3,11 @@
 pub use crate::entry::Entry;
 pub use crate::error::Error;
 pub use crate::header::Header;
-pub use crate::key::{PublicKey, SecretKey};
 pub use crate::package::{Package, PackageSrc};
 
 mod entry;
 mod error;
 mod header;
-mod key;
 mod package;
 
 #[cfg(feature = "std")]
@@ -31,3 +29,4 @@ mod tests {
         assert_eq!(mem::size_of::<Entry>(), 308);
     }
 }
+

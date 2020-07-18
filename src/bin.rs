@@ -1,4 +1,3 @@
-use blake3::Hash;
 use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -6,7 +5,10 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{symlink, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path};
 
-use crate::{Entry, Error, Header, Package, PackageSrc, PublicKey, SecretKey};
+use blake3::Hash;
+use sodiumoxide::crypto::sign::{self, PublicKey, SecretKey};
+
+use crate::{Entry, Error, Header, Package, PackageSrc};
 
 // This ensures that all platforms use the same mode defines
 const MODE_PERM: u32 = 0o7777;
@@ -102,7 +104,8 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
             .map_err(Error::Io)?
             .read_exact(&mut data)
             .map_err(Error::Io)?;
-        SecretKey::from_data(data)
+        SecretKey::from_slice(&data)
+            .ok_or(Error::InvalidKey)?
     };
 
     //TODO: move functions to library
@@ -122,10 +125,12 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
     // Create initial header
     let mut header = Header {
         signature: [0; 64],
-        public_key: secret_key.public_key().into_data(),
+        public_key: [0; 32],
         blake3: [0; 32],
         count: entries.len() as u64
     };
+
+    header.public_key.copy_from_slice(secret_key.public_key().as_ref());
 
     // Assign offsets to each entry
     let mut data_size: u64 = 0;
@@ -186,13 +191,8 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
 
     //TODO: ensure file size matches
 
-    // Calculate signature
-    let unsigned = header.clone();
-    sodalite::sign_attached(
-        unsafe { plain::as_mut_bytes(&mut header) },
-        unsafe { &plain::as_bytes(&unsigned)[64..] },
-        secret_key.as_data()
-    );
+    let sig = unsafe { sign::sign(&plain::as_bytes(&header)[64..], &secret_key) };
+    header.signature.copy_from_slice(&sig);
 
     // Write archive header
     archive_file.seek(SeekFrom::Start(0))
@@ -220,7 +220,8 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<()
             .map_err(Error::Io)?
             .read_exact(&mut data)
             .map_err(Error::Io)?;
-        PublicKey::from_data(data)
+        PublicKey::from_slice(&data)
+            .ok_or(Error::InvalidKey)?
     };
 
     let mut archive_file = fs::OpenOptions::new()
@@ -333,10 +334,8 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<()
 
 #[cfg(feature = "rand")]
 pub fn keygen(secret_path: &str, public_path: &str) -> Result<(), Error> {
-    use rand::rngs::OsRng;
+    let (public_key, secret_key) = sign::gen_keypair();
 
-    let secret_key = SecretKey::new(&mut OsRng)
-        .map_err(Error::Rand)?;
     fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -344,10 +343,9 @@ pub fn keygen(secret_path: &str, public_path: &str) -> Result<(), Error> {
         .mode(0o400)
         .open(secret_path)
         .map_err(Error::Io)?
-        .write_all(secret_key.as_data())
+        .write_all(secret_key.as_ref())
         .map_err(Error::Io)?;
 
-    let public_key = secret_key.public_key();
     fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -355,7 +353,7 @@ pub fn keygen(secret_path: &str, public_path: &str) -> Result<(), Error> {
         .mode(0o400)
         .open(public_path)
         .map_err(Error::Io)?
-        .write_all(public_key.as_data())
+        .write_all(public_key.as_ref())
         .map_err(Error::Io)?;
 
     Ok(())
@@ -370,7 +368,8 @@ pub fn list(public_path: &str, archive_path: &str) -> Result<(), Error> {
             .map_err(Error::Io)?
             .read_exact(&mut data)
             .map_err(Error::Io)?;
-        PublicKey::from_data(data)
+        PublicKey::from_slice(&data)
+            .ok_or(Error::InvalidKey)?
     };
 
     let mut archive_file = fs::OpenOptions::new()
