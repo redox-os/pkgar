@@ -2,7 +2,9 @@ use blake3::Hash;
 use core::convert::TryFrom;
 use core::mem;
 
-use crate::{Entry, Error, Header, PublicKey};
+use sodiumoxide::crypto::sign::PublicKey;
+
+use crate::{Entry, Error, Header};
 
 pub enum PackageSrc<'a> {
     #[cfg(feature = "std")]
