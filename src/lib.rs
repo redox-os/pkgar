@@ -5,6 +5,8 @@ pub use crate::error::Error;
 pub use crate::header::Header;
 pub use crate::package::{Package, PackageSrc};
 
+pub(crate) use pkgar_keys as keys;
+
 mod entry;
 mod error;
 mod header;

@@ -2,7 +2,6 @@ use clap::{App, AppSettings, Arg, SubCommand};
 use pkgar::bin::{
     create,
     extract,
-    keygen,
     list,
 };
 use std::process;
@@ -54,23 +53,6 @@ fn main() {
                 .default_value(".")
             )
         )
-        .subcommand(SubCommand::with_name("keygen")
-            .about("Generate keys")
-            .arg(Arg::with_name("secret")
-                .help("Secret key")
-                .short("s")
-                .long("secret")
-                .required(true)
-                .takes_value(true)
-            )
-            .arg(Arg::with_name("public")
-                .help("Public key")
-                .short("p")
-                .long("public")
-                .required(true)
-                .takes_value(true)
-            )
-        )
         .subcommand(SubCommand::with_name("list")
             .about("List archive")
             .arg(Arg::with_name("public")
@@ -101,11 +83,6 @@ fn main() {
             matches.value_of("public").unwrap(),
             matches.value_of("file").unwrap(),
             matches.value_of("folder").unwrap()
-        )
-    } else if let Some(matches) = matches.subcommand_matches("keygen") {
-        keygen(
-            matches.value_of("secret").unwrap(),
-            matches.value_of("public").unwrap(),
         )
     } else if let Some(matches) = matches.subcommand_matches("list") {
         list(

@@ -13,6 +13,7 @@ required-features = ["clap", "rand", "std"]
 
 [dependencies]
 plain = "0.2.3"
+pkgar-keys = { path = "../pkgar-keys" }
 sodiumoxide = { version = "0.2.5", default_features = false }
 
 [dependencies.clap]

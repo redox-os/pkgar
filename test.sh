@@ -16,20 +16,19 @@ else
     cargo build --release
 fi
 
-time target/$build/pkgar \
-    keygen \
-    --secret target/test/secret.key \
-    --public target/test/public.key
+time pkgar-keys gen \
+    --keyfile target/test/secret.toml \
+    --pubkeyfile target/test/public.toml
 
 time target/$build/pkgar \
     create \
-    --secret target/test/secret.key \
+    --secret target/test/secret.toml \
     --file target/test/src.pkg \
     src
 
 time target/$build/pkgar \
     extract \
-    --public target/test/public.key \
+    --public target/test/public.toml \
     --file target/test/src.pkg \
     target/test/src
 

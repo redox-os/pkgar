@@ -6,9 +6,10 @@ use std::os::unix::fs::{symlink, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path};
 
 use blake3::Hash;
-use sodiumoxide::crypto::sign::{self, PublicKey, SecretKey};
+use sodiumoxide::crypto::sign;
 
 use crate::{Entry, Error, Header, Package, PackageSrc};
+use crate::keys::{self, PublicKeyFile};
 
 // This ensures that all platforms use the same mode defines
 const MODE_PERM: u32 = 0o7777;
@@ -20,15 +21,13 @@ fn copy_hash<R: Read, W: Write>(mut read: R, mut write: W, buf: &mut [u8]) -> Re
     let mut hasher = blake3::Hasher::new();
     let mut total = 0;
     loop {
-        let count = read.read(buf)
-            .map_err(Error::Io)?;
+        let count = read.read(buf)?;
         if count == 0 {
             break;
         }
         total += count as u64;
         //TODO: Progress
-        write.write_all(&buf[..count])
-            .map_err(Error::Io)?;
+        write.write_all(&buf[..count])?;
         hasher.update_with_join::<blake3::join::RayonJoin>(&buf[..count]);
     }
     Ok((total, hasher.finalize()))
@@ -96,17 +95,9 @@ fn folder_entries<P, Q>(base: P, path: Q, entries: &mut Vec<Entry>) -> io::Resul
 }
 
 pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(), Error> {
-    let secret_key = {
-        let mut data = [0; 64];
-        fs::OpenOptions::new()
-            .read(true)
-            .open(secret_path)
-            .map_err(Error::Io)?
-            .read_exact(&mut data)
-            .map_err(Error::Io)?;
-        SecretKey::from_slice(&data)
-            .ok_or(Error::InvalidKey)?
-    };
+    let secret_key = keys::get_skey(&secret_path.as_ref())?
+        .key()
+        .expect(&format!("{} was encrypted?", secret_path));
 
     //TODO: move functions to library
 
@@ -114,13 +105,11 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
         .write(true)
         .create(true)
         .truncate(true)
-        .open(archive_path)
-        .map_err(Error::Io)?;
+        .open(archive_path)?;
 
     // Create a list of entries
     let mut entries = Vec::new();
-    folder_entries(folder, folder, &mut entries)
-        .map_err(Error::Io)?;
+    folder_entries(folder, folder, &mut entries)?;
 
     // Create initial header
     let mut header = Header {
@@ -142,8 +131,7 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
 
     // Seek to data offset
     let data_offset = header.total_size()?;
-    archive_file.seek(SeekFrom::Start(data_offset as u64))
-        .map_err(Error::Io)?;
+    archive_file.seek(SeekFrom::Start(data_offset as u64))?;
     //TODO: fallocate data_offset + data_size
 
     // Stream each file, writing data and calculating b3sums
@@ -158,13 +146,11 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
             MODE_FILE => {
                 let mut entry_file = fs::OpenOptions::new()
                     .read(true)
-                    .open(path)
-                    .map_err(Error::Io)?;
+                    .open(path)?;
                 copy_hash(&mut entry_file, &mut archive_file, &mut buf)?
             },
             MODE_SYMLINK => {
-                let destination = fs::read_link(path)
-                    .map_err(Error::Io)?;
+                let destination = fs::read_link(path)?;
                 let mut data = destination.as_os_str().as_bytes();
                 copy_hash(&mut data, &mut archive_file, &mut buf)?
             },
@@ -194,39 +180,27 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
     header.signature = sign::sign_detached(unsafe { &plain::as_bytes(&header)[64..] }, &secret_key).0;
 
     // Write archive header
-    archive_file.seek(SeekFrom::Start(0))
-        .map_err(Error::Io)?;
+    archive_file.seek(SeekFrom::Start(0))?;
     archive_file.write_all(unsafe {
         plain::as_bytes(&header)
-    }).map_err(Error::Io)?;
+    })?;
 
     // Write each entry header
     for entry in &entries {
         archive_file.write_all(unsafe {
             plain::as_bytes(entry)
-        }).map_err(Error::Io)?;
+        })?;
     }
 
     Ok(())
 }
 
 pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<(), Error> {
-    let public_key = {
-        let mut data = [0; 32];
-        fs::OpenOptions::new()
-            .read(true)
-            .open(public_path)
-            .map_err(Error::Io)?
-            .read_exact(&mut data)
-            .map_err(Error::Io)?;
-        PublicKey::from_slice(&data)
-            .ok_or(Error::InvalidKey)?
-    };
+    let public_key = PublicKeyFile::open(&public_path.as_ref())?.pkey;
 
     let mut archive_file = fs::OpenOptions::new()
         .read(true)
-        .open(archive_path)
-        .map_err(Error::Io)?;
+        .open(archive_path)?;
 
     let mut package = Package::new(
         PackageSrc::File(&mut archive_file),
@@ -269,8 +243,7 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<()
             format!(".pkgar.{}", entry_hash.to_hex())
         };
         let temp_path = if let Some(parent) = entry_path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(Error::Io)?;
+            fs::create_dir_all(parent)?;
             parent.join(temp_name)
         } else {
             return Err(Error::Io(io::Error::new(
@@ -290,16 +263,14 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<()
                     .create(true)
                     .truncate(true)
                     .mode(mode_perm)
-                    .open(&temp_path)
-                    .map_err(Error::Io)?;
+                    .open(&temp_path)?;
                 entry.copy_hash(&mut package, &mut temp_file, &mut buf)?
             },
             MODE_SYMLINK => {
                 let mut data = Vec::new();
                 let (total, hash) = entry.copy_hash(&mut package, &mut data, &mut buf)?;
                 let os_str: &OsStr = OsStrExt::from_bytes(data.as_slice());
-                symlink(os_str, &temp_path)
-                    .map_err(Error::Io)?;
+                symlink(os_str, &temp_path)?;
                 (total, hash)
             },
             _ => {
@@ -324,57 +295,18 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<()
     }
 
     for (temp_path, entry_path) in renames {
-        fs::rename(&temp_path, &entry_path)
-            .map_err(Error::Io)?;
+        fs::rename(&temp_path, &entry_path)?;
     }
 
     Ok(())
 }
 
-#[cfg(feature = "rand")]
-pub fn keygen(secret_path: &str, public_path: &str) -> Result<(), Error> {
-    let (public_key, secret_key) = sign::gen_keypair();
-
-    fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o400)
-        .open(secret_path)
-        .map_err(Error::Io)?
-        .write_all(secret_key.as_ref())
-        .map_err(Error::Io)?;
-
-    fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o400)
-        .open(public_path)
-        .map_err(Error::Io)?
-        .write_all(public_key.as_ref())
-        .map_err(Error::Io)?;
-
-    Ok(())
-}
-
 pub fn list(public_path: &str, archive_path: &str) -> Result<(), Error> {
-    let public_key = {
-        let mut data = [0; 32];
-        fs::OpenOptions::new()
-            .read(true)
-            .open(public_path)
-            .map_err(Error::Io)?
-            .read_exact(&mut data)
-            .map_err(Error::Io)?;
-        PublicKey::from_slice(&data)
-            .ok_or(Error::InvalidKey)?
-    };
+    let public_key = PublicKeyFile::open(&public_path.as_ref())?.pkey;
 
     let mut archive_file = fs::OpenOptions::new()
         .read(true)
-        .open(archive_path)
-        .map_err(Error::Io)?;
+        .open(archive_path)?;
 
     // Read header first
     let mut package = Package::new(
@@ -389,3 +321,4 @@ pub fn list(public_path: &str, archive_path: &str) -> Result<(), Error> {
 
     Ok(())
 }
+

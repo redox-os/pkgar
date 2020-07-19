@@ -66,3 +66,10 @@ interest. If desired, they can check if a locally cached file matches the
 referenced blake3. If this is not the case, they may access the data portion and
 verify that the data at the offset and length in the header entry matches the
 blake3. In that case, the data may be retrieved.
+
+## Development
+To run the integration tests, you'll need to have pkgar-keys in your $PATH (or the
+$PATH of the test script). Clone the repo from
+[https://gitlab.redox-os.org/MggMuggins/pkgar-keys]() and run `cargo install --path .`.
+Use `test.sh` to run the integration tests.
+
