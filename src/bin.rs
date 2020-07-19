@@ -191,8 +191,7 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
 
     //TODO: ensure file size matches
 
-    let sig = unsafe { sign::sign(&plain::as_bytes(&header)[64..], &secret_key) };
-    header.signature.copy_from_slice(&sig);
+    header.signature = sign::sign_detached(unsafe { &plain::as_bytes(&header)[64..] }, &secret_key).0;
 
     // Write archive header
     archive_file.seek(SeekFrom::Start(0))
