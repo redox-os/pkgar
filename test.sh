@@ -18,18 +18,19 @@ fi
 
 time pkgar-keys gen \
     --keyfile target/test/secret.toml \
-    --pubkeyfile target/test/public.toml
+    --pubkeyfile target/test/public.toml \
+    --plaintext
 
 time target/$build/pkgar \
     create \
     --secret target/test/secret.toml \
-    --file target/test/src.pkg \
+    --archive target/test/src.pkg \
     src
 
 time target/$build/pkgar \
     extract \
     --public target/test/public.toml \
-    --file target/test/src.pkg \
+    --archive target/test/src.pkg \
     target/test/src
 
 diff -ruwN src target/test/src

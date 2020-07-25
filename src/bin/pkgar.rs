@@ -1,93 +1,98 @@
-use clap::{App, AppSettings, Arg, SubCommand};
+use std::process;
+
+use clap::{App, AppSettings, Arg, crate_authors, crate_description, crate_name, crate_version, SubCommand};
 use pkgar::bin::{
     create,
     extract,
     list,
 };
-use std::process;
+use pkgar_keys::{DEFAULT_PUBKEY, DEFAULT_SECKEY};
 
 fn main() {
-    let matches = App::new("pkgar")
+    let (default_pkey, default_skey) = (
+        DEFAULT_PUBKEY.to_string_lossy(),
+        DEFAULT_SECKEY.to_string_lossy(),
+    );
+
+    let help_pkey = format!("Public key file (defaults to '{}')", &default_pkey);
+    let help_skey = format!("Secret key file (defaults to '{}')", &default_skey);
+
+    let arg_pkey = Arg::with_name("public")
+        .help(&help_pkey)
+        .short("p")
+        .long("public")
+        .required(true)
+        .takes_value(true)
+        .value_name("FILE")
+        .default_value(&default_pkey);
+
+    let arg_skey = Arg::with_name("secret")
+        .help(&help_skey)
+        .short("s")
+        .long("secret")
+        .required(true)
+        .takes_value(true)
+        .value_name("FILE")
+        .default_value(&default_skey);
+
+    let arg_archive = Arg::with_name("archive")
+        .help("Archive file")
+        .short("a")
+        .long("archive")
+        .required(true)
+        .takes_value(true)
+        .value_name("FILE");
+
+    let matches = App::new(crate_name!())
+        .author(crate_authors!(", "))
+        .about(crate_description!())
+        .version(crate_version!())
         .setting(AppSettings::SubcommandRequiredElseHelp)
         .subcommand(SubCommand::with_name("create")
             .about("Create archive")
-            .arg(Arg::with_name("secret")
-                .help("Secret key")
-                .short("s")
-                .long("secret")
+            .arg(&arg_skey)
+            .arg(&arg_archive)
+            .arg(Arg::with_name("basedir")
+                .help("Directory to archive (defaults to '.')")
                 .required(true)
-                .takes_value(true)
-            )
-            .arg(Arg::with_name("file")
-                .help("Archive file")
-                .short("f")
-                .long("file")
-                .required(true)
-                .takes_value(true)
-            )
-            .arg(Arg::with_name("folder")
-                .help("Folder to archive, defaults to \".\"")
-                .required(true)
+                .value_name("DIR")
                 .default_value(".")
             )
         )
         .subcommand(SubCommand::with_name("extract")
             .about("Extract archive")
-            .arg(Arg::with_name("public")
-                .help("Public key")
-                .short("p")
-                .long("public")
+            .arg(&arg_pkey)
+            .arg(&arg_archive)
+            .arg(Arg::with_name("basedir")
+                .help("Directory to unpack to (defaults to '.')")
                 .required(true)
-                .takes_value(true)
-            )
-            .arg(Arg::with_name("file")
-                .help("Archive file")
-                .short("f")
-                .long("file")
-                .required(true)
-                .takes_value(true)
-            )
-            .arg(Arg::with_name("folder")
-                .help("Folder to archive, defaults to \".\"")
-                .required(true)
+                .value_name("DIR")
                 .default_value(".")
             )
         )
         .subcommand(SubCommand::with_name("list")
             .about("List archive")
-            .arg(Arg::with_name("public")
-                .help("Public key")
-                .short("p")
-                .long("public")
-                .required(true)
-                .takes_value(true)
-            )
-            .arg(Arg::with_name("file")
-                .help("Archive file")
-                .short("f")
-                .long("file")
-                .required(true)
-                .takes_value(true)
-            )
+            .arg(&arg_pkey)
+            .arg(&arg_archive)
         )
         .get_matches();
 
     let res = if let Some(matches) = matches.subcommand_matches("create") {
         create(
             matches.value_of("secret").unwrap(),
-            matches.value_of("file").unwrap(),
-            matches.value_of("folder").unwrap()
+            matches.value_of("archive").unwrap(),
+            matches.value_of("basedir").unwrap()
         )
     } else if let Some(matches) = matches.subcommand_matches("extract") {
         extract(
             matches.value_of("public").unwrap(),
-            matches.value_of("file").unwrap(),
-            matches.value_of("folder").unwrap()
+            matches.value_of("archive").unwrap(),
+            matches.value_of("basedir").unwrap()
         )
     } else if let Some(matches) = matches.subcommand_matches("list") {
         list(
             matches.value_of("public").unwrap(),
-            matches.value_of("file").unwrap()
+            matches.value_of("archive").unwrap()
         )
     } else {
         Ok(())
@@ -101,3 +106,4 @@ fn main() {
         }
     }
 }
+
