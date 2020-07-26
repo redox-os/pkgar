@@ -1,0 +1,17 @@
+[package]
+name = "pkgar-keys"
+version = "0.1.0"
+authors = ["Wesley Hershberger <mggmugginsmc@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+clap = "2.33.1"
+dirs = "3.0.1"
+hex = { version = "0.4.2", features = ["serde"] }
+lazy_static = "1.4.0"
+seckey = "0.9.3"
+serde = { version = "1.0.114", default_features = false, features = ["derive"] }
+sodiumoxide = { version = "0.2.5", default_features = false }
+termion = "1.5.5"
+toml = "0.5.6"
+

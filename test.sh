@@ -16,7 +16,7 @@ else
     cargo build --release
 fi
 
-time pkgar-keys gen \
+time target/$build/pkgar-keys gen \
     --keyfile target/test/secret.toml \
     --pubkeyfile target/test/public.toml \
     --plaintext
@@ -25,7 +25,7 @@ time target/$build/pkgar \
     create \
     --secret target/test/secret.toml \
     --archive target/test/src.pkg \
-    src
+    pkgar/src
 
 time target/$build/pkgar \
     extract \
@@ -33,5 +33,5 @@ time target/$build/pkgar \
     --archive target/test/src.pkg \
     target/test/src
 
-diff -ruwN src target/test/src
+diff -ruwN pkgar/src target/test/src
 
