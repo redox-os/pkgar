@@ -17,19 +17,19 @@ else
 fi
 
 time target/$build/pkgar-keys gen \
-    --keyfile target/test/secret.toml \
-    --pubkeyfile target/test/public.toml \
+    --skey target/test/secret.toml \
+    --pkey target/test/public.toml \
     --plaintext
 
 time target/$build/pkgar \
     create \
-    --secret target/test/secret.toml \
+    --skey target/test/secret.toml \
     --archive target/test/src.pkg \
     pkgar/src
 
 time target/$build/pkgar \
     extract \
-    --public target/test/public.toml \
+    --pkey target/test/public.toml \
     --archive target/test/src.pkg \
     target/test/src
 

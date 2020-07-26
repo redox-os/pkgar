@@ -7,10 +7,6 @@ authors = ["Jeremy Soller <jackpot51@gmail.com>", "Wesley Hershberger <mggmuggin
 repository = "https://gitlab.redox-os.org/redox-os/pkgar"
 edition = "2018"
 
-[[bin]]
-name = "pkgar"
-required-features = ["clap", "rand", "std"]
-
 [dependencies]
 plain = "0.2.3"
 pkgar-keys = { path = "../pkgar-keys" }
@@ -20,20 +16,12 @@ sodiumoxide = { version = "0.2.5", default_features = false }
 version = "2.33.0"
 optional = true
 
-[dependencies.rand]
-version = "0.7.2"
-optional = true
-
-[dependencies.rand_core]
-version = "0.5.1"
-default-features = false
-
 [dependencies.blake3]
 version = "0.2.1"
 default-features = false
 features = ["rayon"]
 
 [features]
-default = ["clap", "rand", "std"]
+default = ["clap", "std"]
 std = []
 

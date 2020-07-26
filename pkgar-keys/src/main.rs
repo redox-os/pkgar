@@ -19,11 +19,11 @@ fn cli() -> Result<i32, Error> {
     let matches = clap_app!(("pkgar-keys") =>
         (author: "Wesley Hershberger <mggmugginsmc@gmail.com>")
         (about: "NaCl key management for pkgar")
-        (@arg keyfile: -k --keyfile [FILE] +global "Alternate secret keyfile (defaults to '~/.pkgar/keys/id_ed25519.toml')")
+        (@arg skey: -s --skey [FILE] +global "Alternate secret keyfile (defaults to '~/.pkgar/keys/id_ed25519.toml')")
         (@setting SubcommandRequired)
         (@subcommand gen =>
             (about: "Generate a keypair and store on the filesystem")
-            (@arg pubkeyfile: -p --pubkeyfile [FILE]
+            (@arg pkey: -p --pkey [FILE]
                 "Alternate public keyfile (defaults to `~/.pkgar/keys/id_ed25519.pub.toml`)")
             (@arg plaintext:  -P --plaintext
                 "Do not prompt for a passphrase and store the secret key as plain text")
@@ -39,7 +39,7 @@ fn cli() -> Result<i32, Error> {
         )
     ).get_matches();
     
-    let skey_path = matches.value_of("keyfile")
+    let skey_path = matches.value_of("skey")
         .map(|file| PathBuf::from(file) )
         .unwrap_or(DEFAULT_SECKEY.clone());
     
@@ -62,7 +62,7 @@ fn cli() -> Result<i32, Error> {
                 }
             }
             
-            let pkey_path = submatches.value_of("pubkeyfile")
+            let pkey_path = submatches.value_of("pkey")
                 .map(|file| PathBuf::from(file) )
                 .unwrap_or(DEFAULT_PUBKEY.clone());
             

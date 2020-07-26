@@ -17,19 +17,19 @@ fn main() {
     let help_pkey = format!("Public key file (defaults to '{}')", &default_pkey);
     let help_skey = format!("Secret key file (defaults to '{}')", &default_skey);
 
-    let arg_pkey = Arg::with_name("public")
+    let arg_pkey = Arg::with_name("pkey")
         .help(&help_pkey)
         .short("p")
-        .long("public")
+        .long("pkey")
         .required(true)
         .takes_value(true)
         .value_name("FILE")
         .default_value(&default_pkey);
 
-    let arg_skey = Arg::with_name("secret")
+    let arg_skey = Arg::with_name("skey")
         .help(&help_skey)
         .short("s")
-        .long("secret")
+        .long("skey")
         .required(true)
         .takes_value(true)
         .value_name("FILE")
@@ -79,19 +79,19 @@ fn main() {
 
     let res = if let Some(matches) = matches.subcommand_matches("create") {
         create(
-            matches.value_of("secret").unwrap(),
+            matches.value_of("skey").unwrap(),
             matches.value_of("archive").unwrap(),
             matches.value_of("basedir").unwrap()
         )
     } else if let Some(matches) = matches.subcommand_matches("extract") {
         extract(
-            matches.value_of("public").unwrap(),
+            matches.value_of("pkey").unwrap(),
             matches.value_of("archive").unwrap(),
             matches.value_of("basedir").unwrap()
         )
     } else if let Some(matches) = matches.subcommand_matches("list") {
         list(
-            matches.value_of("public").unwrap(),
+            matches.value_of("pkey").unwrap(),
             matches.value_of("archive").unwrap()
         )
     } else {
