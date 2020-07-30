@@ -6,10 +6,12 @@ use std::os::unix::fs::{symlink, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path};
 
 use blake3::Hash;
+use pkgar_core::{Entry, Header, PackageSrc};
+use pkgar_keys::PublicKeyFile;
 use sodiumoxide::crypto::sign;
 
-use crate::{Entry, Error, Header, Package, PackageSrc};
-use crate::keys::{self, PublicKeyFile};
+use crate::Error;
+use crate::package::PackageFile;
 
 // This ensures that all platforms use the same mode defines
 const MODE_PERM: u32 = 0o7777;
@@ -95,7 +97,7 @@ fn folder_entries<P, Q>(base: P, path: Q, entries: &mut Vec<Entry>) -> io::Resul
 }
 
 pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(), Error> {
-    let secret_key = keys::get_skey(&secret_path.as_ref())?
+    let secret_key = pkgar_keys::get_skey(&secret_path.as_ref())?
         .key()
         .expect(&format!("{} was encrypted?", secret_path));
 
@@ -126,7 +128,7 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
     for entry in &mut entries {
         entry.offset = data_size;
         data_size = data_size.checked_add(entry.size)
-            .ok_or(Error::Overflow)?;
+            .ok_or(Error::Core(pkgar_core::Error::Overflow))?;
     }
 
     // Seek to data offset
@@ -198,15 +200,8 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
 pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<(), Error> {
     let public_key = PublicKeyFile::open(&public_path.as_ref())?.pkey;
 
-    let mut archive_file = fs::OpenOptions::new()
-        .read(true)
-        .open(archive_path)?;
-
-    let mut package = Package::new(
-        PackageSrc::File(&mut archive_file),
-        &public_key
-    )?;
-    let entries = package.entries()?;
+    let mut package = PackageFile::new(archive_path)?;
+    let entries = package.entries(&public_key)?;
 
     // TODO: Validate that all entries can be installed, before installing
 
@@ -235,7 +230,7 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<()
             )));
         }
 
-        let entry_hash = Hash::from(entry.hash());
+        let entry_hash = Hash::from(entry.blake3);
         let temp_name = if let Some(file_name) = entry_path.file_name().and_then(|x| x.to_str())
         {
             format!(".pkgar.{}", file_name)
@@ -252,7 +247,7 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<()
             )));
         };
 
-        let mode = entry.mode();
+        let mode = entry.mode;
         let mode_kind = mode & MODE_KIND;
         let mode_perm = mode & MODE_PERM;
         let (total, hash) = match mode_kind {
@@ -264,11 +259,11 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<()
                     .truncate(true)
                     .mode(mode_perm)
                     .open(&temp_path)?;
-                entry.copy_hash(&mut package, &mut temp_file, &mut buf)?
+                copy_hash(&mut package.src, &mut temp_file, &mut buf)?
             },
             MODE_SYMLINK => {
                 let mut data = Vec::new();
-                let (total, hash) = entry.copy_hash(&mut package, &mut data, &mut buf)?;
+                let (total, hash) = copy_hash(&mut package.src, &mut data, &mut buf)?;
                 let os_str: &OsStr = OsStrExt::from_bytes(data.as_slice());
                 symlink(os_str, &temp_path)?;
                 (total, hash)
@@ -280,15 +275,15 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<()
                 )));
             }
         };
-        if total != entry.size() {
+        if total != entry.size {
             return Err(Error::Io(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!("Copied {} instead of {}", total, entry.size())
+                format!("Copied {} instead of {}", total, entry.size)
             )));
         }
         if entry_hash != hash {
             let _ = fs::remove_file(temp_path);
-            return Err(Error::InvalidBlake3);
+            return Err(Error::Core(pkgar_core::Error::InvalidBlake3));
         }
 
         renames.push((temp_path, entry_path));
@@ -304,16 +299,9 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<()
 pub fn list(public_path: &str, archive_path: &str) -> Result<(), Error> {
     let public_key = PublicKeyFile::open(&public_path.as_ref())?.pkey;
 
-    let mut archive_file = fs::OpenOptions::new()
-        .read(true)
-        .open(archive_path)?;
-
     // Read header first
-    let mut package = Package::new(
-        PackageSrc::File(&mut archive_file),
-        &public_key
-    )?;
-    let entries = package.entries()?;
+    let mut package = PackageFile::new(archive_path)?;
+    let entries = package.entries(&public_key)?;
     for entry in entries {
         let relative = Path::new(OsStr::from_bytes(entry.path()));
         println!("{}", relative.display());

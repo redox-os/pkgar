@@ -1,34 +1,23 @@
-#![cfg_attr(not(feature = "std"), no_std)]
-
-pub use crate::entry::Entry;
-pub use crate::error::Error;
-pub use crate::header::Header;
-pub use crate::package::{Package, PackageSrc};
-
-pub(crate) use pkgar_keys as keys;
-
-mod entry;
-mod error;
-mod header;
+pub mod bin;
 mod package;
 
-#[cfg(feature = "std")]
-pub mod bin;
+use thiserror::Error;
 
-#[cfg(test)]
-mod tests {
-    use core::mem;
-
-    use crate::{Entry, Header};
-
-    #[test]
-    fn header_size() {
-        assert_eq!(mem::size_of::<Header>(), 136);
-    }
-
-    #[test]
-    fn entry_size() {
-        assert_eq!(mem::size_of::<Entry>(), 308);
-    }
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
+    
+    #[error("key error: {0}")]
+    Keys(#[from] pkgar_keys::Error),
+    
+    #[error("pkgar error: {0}")]
+    Core(pkgar_core::Error),
 }
 
+impl From<pkgar_core::Error> for Error {
+    // Core::Error doesn't implement std::Error, so thiserror won't generate this impl
+    fn from(err: pkgar_core::Error) -> Error {
+        Error::Core(err)
+    }
+}
