@@ -1,4 +1,6 @@
 //! The packed structs represent the on-disk format of pkgar
+use core::fmt;
+
 use plain::Plain;
 
 #[derive(Clone, Copy)]
@@ -17,6 +19,22 @@ pub struct Entry {
 }
 
 impl Entry {
+    pub fn blake3(&self) -> [u8; 32] {
+        self.blake3
+    }
+    
+    pub fn offset(&self) -> u64 {
+        self.offset
+    }
+    
+    pub fn size(&self) -> u64 {
+        self.size
+    }
+    
+    pub fn mode(&self) -> u32 {
+        self.mode
+    }
+    
     /// Retrieve the path, ending at the first NUL
     pub fn path(&self) -> &[u8] {
         let mut i = 0;
@@ -58,4 +76,16 @@ impl Entry {
 }
 
 unsafe impl Plain for Entry {}
+
+impl fmt::Debug for Entry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Entry {{\n\tblake3: {:?},\n\toffset: {:?},\n\tsize: {:?},\n\tmode: {:#o},\n\tpath: {:?}\n}}",
+            self.blake3(),
+            self.offset(),
+            self.size(),
+            self.mode(),
+            &self.path[..],
+        )
+    }
+}
 

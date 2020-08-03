@@ -5,7 +5,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{symlink, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path};
 
-use blake3::Hash;
+use blake3::{Hash, Hasher};
 use pkgar_core::{Entry, Header, PackageSrc};
 use pkgar_keys::PublicKeyFile;
 use sodiumoxide::crypto::sign;
@@ -19,8 +19,9 @@ const MODE_KIND: u32 = 0o170000;
 const MODE_FILE: u32 = 0o100000;
 const MODE_SYMLINK: u32 = 0o120000;
 
-fn copy_hash<R: Read, W: Write>(mut read: R, mut write: W, buf: &mut [u8]) -> Result<(u64, Hash), Error> {
-    let mut hasher = blake3::Hasher::new();
+//TODO: Refactor to reduce duplication between these functions
+fn copy_and_hash<R: Read, W: Write>(mut read: R, mut write: W, buf: &mut [u8]) -> Result<(u64, Hash), Error> {
+    let mut hasher = Hasher::new();
     let mut total = 0;
     loop {
         let count = read.read(buf)?;
@@ -29,6 +30,26 @@ fn copy_hash<R: Read, W: Write>(mut read: R, mut write: W, buf: &mut [u8]) -> Re
         }
         total += count as u64;
         //TODO: Progress
+        write.write_all(&buf[..count])?;
+        hasher.update_with_join::<blake3::join::RayonJoin>(&buf[..count]);
+    }
+    Ok((total, hasher.finalize()))
+}
+
+fn copy_entry_and_hash<W: Write>(
+    src: &mut PackageFile,
+    entry: Entry,
+    mut write: W,
+    buf: &mut [u8]
+) -> Result<(u64, Hash), Error> {
+    let mut hasher = Hasher::new();
+    let mut total = 0;
+    loop {
+        let count = src.read_entry(entry, total, buf)?;
+        if count == 0 {
+            break;
+        }
+        total += count as u64;
         write.write_all(&buf[..count])?;
         hasher.update_with_join::<blake3::join::RayonJoin>(&buf[..count]);
     }
@@ -149,12 +170,12 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
                 let mut entry_file = fs::OpenOptions::new()
                     .read(true)
                     .open(path)?;
-                copy_hash(&mut entry_file, &mut archive_file, &mut buf)?
+                copy_and_hash(&mut entry_file, &mut archive_file, &mut buf)?
             },
             MODE_SYMLINK => {
                 let destination = fs::read_link(path)?;
                 let mut data = destination.as_os_str().as_bytes();
-                copy_hash(&mut data, &mut archive_file, &mut buf)?
+                copy_and_hash(&mut data, &mut archive_file, &mut buf)?
             },
             _ => {
                 return Err(Error::Io(io::Error::new(
@@ -259,11 +280,11 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<()
                     .truncate(true)
                     .mode(mode_perm)
                     .open(&temp_path)?;
-                copy_hash(&mut package.src, &mut temp_file, &mut buf)?
+                copy_entry_and_hash(&mut package, entry, &mut temp_file, &mut buf)?
             },
             MODE_SYMLINK => {
                 let mut data = Vec::new();
-                let (total, hash) = copy_hash(&mut package.src, &mut data, &mut buf)?;
+                let (total, hash) = copy_entry_and_hash(&mut package, entry, &mut data, &mut buf)?;
                 let os_str: &OsStr = OsStrExt::from_bytes(data.as_slice());
                 symlink(os_str, &temp_path)?;
                 (total, hash)

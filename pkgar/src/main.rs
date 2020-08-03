@@ -7,6 +7,7 @@ use pkgar::bin::{
     list,
 };
 use pkgar_keys::{DEFAULT_PUBKEY, DEFAULT_SECKEY};
+use user_error::UFE;
 
 fn main() {
     let (default_pkey, default_skey) = (
@@ -101,7 +102,7 @@ fn main() {
     match res {
         Ok(()) => (),
         Err(err) => {
-            eprintln!("pkgar error: {:?}", err);
+            eprintln!("{}", err.into_ufe());
             process::exit(1);
         }
     }

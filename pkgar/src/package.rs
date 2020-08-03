@@ -6,6 +6,7 @@ use pkgar_core::PackageSrc;
 
 use crate::Error;
 
+#[derive(Debug)]
 pub struct PackageFile {
     pub(crate) src: File,
 }

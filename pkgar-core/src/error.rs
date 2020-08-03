@@ -27,7 +27,7 @@ impl Display for Error {
             Overflow => "Overflow".to_string(),
             TryFromInt(err) => format!("TryFromInt: {}", err),
         };
-        write!(f, "error: {}", msg)
+        write!(f, "{}", msg)
     }
 }
 

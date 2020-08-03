@@ -28,6 +28,11 @@ time target/$build/pkgar \
     pkgar/src
 
 time target/$build/pkgar \
+    list \
+    --pkey target/test/public.toml \
+    --archive target/test/src.pkg
+
+time target/$build/pkgar \
     extract \
     --pkey target/test/public.toml \
     --archive target/test/src.pkg \
