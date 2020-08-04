@@ -6,7 +6,7 @@ use core::mem;
 pub use crate::entry::Entry;
 pub use crate::error::Error;
 pub use crate::header::Header;
-pub use crate::package::PackageSrc;
+pub use crate::package::{PackageBuf, PackageSrc};
 
 mod entry;
 mod error;

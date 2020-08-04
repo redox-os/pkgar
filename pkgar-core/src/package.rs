@@ -1,6 +1,6 @@
 use alloc::vec;
 use alloc::vec::Vec;
-use core::convert::{AsRef, TryFrom};
+use core::convert::TryFrom;
 
 use sodiumoxide::crypto::sign::PublicKey;
 
@@ -58,17 +58,35 @@ pub trait PackageSrc {
     }
 }
 
-impl<T: AsRef<[u8]>> PackageSrc for T {
+//TODO: Test this impl...
+pub struct PackageBuf<'a> {
+    src: &'a [u8],
+    header: Header,
+}
+
+impl<'a> PackageBuf<'a> {
+    pub fn new(src: &'a [u8], public_key: &PublicKey) -> Result<PackageBuf<'a>, Error> {
+        let zeroes = [0; HEADER_SIZE];
+        let mut new = PackageBuf {
+            src,
+            header: unsafe { *Header::new_unchecked(&zeroes)? },
+        };
+        new.header = *Header::new(&new.src, &public_key)?;
+        Ok(new)
+    }
+}
+
+impl PackageSrc for PackageBuf<'_> {
     type Err = Error;
     
     fn header(&self) -> Header {
-        panic!("Temporary...");
+        self.header
     }
     
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, Error> {
         let start = usize::try_from(offset)
             .map_err(Error::TryFromInt)?;
-        let len = self.as_ref().len();
+        let len = self.src.len();
         if start >= len {
             return Ok(0);
         }
@@ -77,7 +95,7 @@ impl<T: AsRef<[u8]>> PackageSrc for T {
         if end > len {
             end = len;
         }
-        buf.copy_from_slice(&self.as_ref()[start..end]);
+        buf.copy_from_slice(&self.src[start..end]);
         Ok(end.checked_sub(start).unwrap())
     }
 }
