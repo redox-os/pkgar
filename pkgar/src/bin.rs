@@ -2,22 +2,17 @@ use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{symlink, OpenOptionsExt, PermissionsExt};
-use std::path::{Component, Path};
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 
 use blake3::{Hash, Hasher};
 use pkgar_core::{Entry, Header, PackageSrc};
 use pkgar_keys::PublicKeyFile;
 use sodiumoxide::crypto::sign;
 
-use crate::Error;
+use crate::{Error, MODE_PERM, MODE_KIND, MODE_FILE, MODE_SYMLINK};
 use crate::package::PackageFile;
-
-// This ensures that all platforms use the same mode defines
-const MODE_PERM: u32 = 0o7777;
-const MODE_KIND: u32 = 0o170000;
-const MODE_FILE: u32 = 0o100000;
-const MODE_SYMLINK: u32 = 0o120000;
+use crate::transaction::Transaction;
 
 //TODO: Refactor to reduce duplication between these functions
 fn copy_and_hash<R: Read, W: Write>(mut read: R, mut write: W, buf: &mut [u8]) -> Result<(u64, Hash), Error> {
@@ -36,12 +31,16 @@ fn copy_and_hash<R: Read, W: Write>(mut read: R, mut write: W, buf: &mut [u8]) -
     Ok((total, hasher.finalize()))
 }
 
-fn copy_entry_and_hash<W: Write>(
-    src: &mut PackageFile,
+pub(crate) fn copy_entry_and_hash<P, W>(
+    src: &mut P,
     entry: Entry,
     mut write: W,
     buf: &mut [u8]
-) -> Result<(u64, Hash), Error> {
+) -> Result<(u64, Hash), Error>
+where
+    P: PackageSrc<Err = Error>,
+    W: Write,
+{
     let mut hasher = Hasher::new();
     let mut total = 0;
     loop {
@@ -222,97 +221,10 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<()
     let public_key = PublicKeyFile::open(&public_path.as_ref())?.pkey;
 
     let mut package = PackageFile::new(archive_path, &public_key)?;
-    let entries = package.read_entries()?;
-
-    // TODO: Validate that all entries can be installed, before installing
-
-    let folder_path = Path::new(folder);
-    let mut buf = vec![0; 4 * 1024 * 1024];
-    let mut renames = Vec::new();
-    for entry in entries {
-        let relative = Path::new(OsStr::from_bytes(entry.path()));
-        for component in relative.components() {
-            match component {
-                Component::Normal(_) => (),
-                invalid => {
-                    return Err(Error::Io(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("entry path contains invalid component: {:?}", invalid)
-                    )));
-                }
-            }
-        }
-
-        let entry_path = folder_path.join(relative);
-        if ! entry_path.starts_with(&folder_path) {
-            return Err(Error::Io(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("entry path escapes from folder: {:?}", relative)
-            )));
-        }
-
-        let entry_hash = Hash::from(entry.blake3);
-        let temp_name = if let Some(file_name) = entry_path.file_name().and_then(|x| x.to_str())
-        {
-            format!(".pkgar.{}", file_name)
-        } else {
-            format!(".pkgar.{}", entry_hash.to_hex())
-        };
-        let temp_path = if let Some(parent) = entry_path.parent() {
-            fs::create_dir_all(parent)?;
-            parent.join(temp_name)
-        } else {
-            return Err(Error::Io(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("entry path has no parent: {:?}", entry_path)
-            )));
-        };
-
-        let mode = entry.mode;
-        let mode_kind = mode & MODE_KIND;
-        let mode_perm = mode & MODE_PERM;
-        let (total, hash) = match mode_kind {
-            MODE_FILE => {
-                //TODO: decide what to do when temp files are left over
-                let mut temp_file = fs::OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .truncate(true)
-                    .mode(mode_perm)
-                    .open(&temp_path)?;
-                copy_entry_and_hash(&mut package, entry, &mut temp_file, &mut buf)?
-            },
-            MODE_SYMLINK => {
-                let mut data = Vec::new();
-                let (total, hash) = copy_entry_and_hash(&mut package, entry, &mut data, &mut buf)?;
-                let os_str: &OsStr = OsStrExt::from_bytes(data.as_slice());
-                symlink(os_str, &temp_path)?;
-                (total, hash)
-            },
-            _ => {
-                return Err(Error::Io(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("Unsupported mode {:#o}", mode)
-                )));
-            }
-        };
-        if total != entry.size {
-            return Err(Error::Io(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("Copied {} instead of {}", total, entry.size())
-            )));
-        }
-        if entry_hash != hash {
-            let _ = fs::remove_file(temp_path);
-            return Err(Error::Core(pkgar_core::Error::InvalidBlake3));
-        }
-
-        renames.push((temp_path, entry_path));
-    }
-
-    for (temp_path, entry_path) in renames {
-        fs::rename(&temp_path, &entry_path)?;
-    }
+    
+    let mut transaction = Transaction::new();
+    transaction.install(&mut package, folder)?;
+    transaction.commit()?;
 
     Ok(())
 }
@@ -320,7 +232,6 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<()
 pub fn list(public_path: &str, archive_path: &str) -> Result<(), Error> {
     let public_key = PublicKeyFile::open(&public_path.as_ref())?.pkey;
 
-    // Read header first
     let mut package = PackageFile::new(archive_path, &public_key)?;
     let entries = package.read_entries()?;
     for entry in entries {
