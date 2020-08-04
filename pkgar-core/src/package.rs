@@ -1,3 +1,4 @@
+use alloc::vec;
 use alloc::vec::Vec;
 use core::convert::{AsRef, TryFrom};
 
@@ -9,6 +10,31 @@ pub trait PackageSrc {
     type Err: From<Error>;
     
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Err>;
+    
+    fn header(&self) -> Header;
+    
+    /// Users of implementors of `PackageSrc` should use `header` instead of `read_header` for
+    /// cheap header access.
+    /// Implementors of `PackageSrc` should call this function during initialization and store
+    /// the result to pass out with `header`.
+    fn read_header(&mut self, public_key: &PublicKey) -> Result<Header, Self::Err> {
+        let mut header_data = [0; HEADER_SIZE];
+        self.read_at(0, &mut header_data)?;
+        let header = Header::new(&header_data, &public_key)?;
+        Ok(header.clone())
+    }
+    
+    fn read_entries(&mut self) -> Result<Vec<Entry>, Self::Err> {
+        let header = self.header();
+        let entries_size = header.entries_size()
+            .and_then(|rslt| usize::try_from(rslt)
+                .map_err(Error::TryFromInt)
+            )?;
+        let mut entries_data = vec![0; entries_size];
+        self.read_at(HEADER_SIZE as u64, &mut entries_data)?;
+        let entries = header.entries(&entries_data)?;
+        Ok(entries.to_vec())
+    }
     
     /// Read from this src at a given entry's data with a given offset within that entry
     fn read_entry(&mut self, entry: Entry, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Err> {
@@ -23,45 +49,21 @@ pub trait PackageSrc {
             end = buf.len();
         }
         
-        let header = self.header_unchecked()?;
-        
         let offset =
             HEADER_SIZE as u64 +
-            header.entries_size()? +
+            self.header().entries_size()? +
             entry.offset + offset;
         
         self.read_at(offset, &mut buf[..end])
-    }
-    
-    fn header(&mut self, public_key: &PublicKey) -> Result<Header, Self::Err> {
-        let mut header_data = [0; HEADER_SIZE];
-        self.read_at(0, &mut header_data)?;
-        let header = Header::new(&header_data, &public_key)?;
-        Ok(header.clone())
-    }
-    
-    fn header_unchecked(&mut self) -> Result<Header, Self::Err> {
-        let mut header = [0; HEADER_SIZE];
-        self.read_at(0, &mut header)?;
-        Ok(unsafe { Header::new_unchecked(&header) }?
-            .clone())
-    }
-    
-    fn entries(&mut self, public_key: &PublicKey) -> Result<Vec<Entry>, Self::Err> {
-        let header = self.header(public_key)?;
-        let entries_size = header.entries_size()
-            .and_then(|rslt| usize::try_from(rslt)
-                .map_err(Error::TryFromInt)
-            )?;
-        let mut entries_data = vec![0; entries_size];
-        self.read_at(HEADER_SIZE as u64, &mut entries_data)?;
-        let entries = header.entries(&entries_data)?;
-        Ok(entries.to_vec())
     }
 }
 
 impl<T: AsRef<[u8]>> PackageSrc for T {
     type Err = Error;
+    
+    fn header(&self) -> Header {
+        panic!("Temporary...");
+    }
     
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, Error> {
         let start = usize::try_from(offset)

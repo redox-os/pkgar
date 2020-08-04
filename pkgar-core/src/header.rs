@@ -1,6 +1,7 @@
 //! The packed structs represent the on-disk format of pkgar
 
 use core::convert::TryFrom;
+use core::fmt;
 use core::mem;
 use plain::Plain;
 use sodiumoxide::crypto::sign::{self, PublicKey};
@@ -51,6 +52,10 @@ impl Header {
         Ok(plain::from_bytes(data)?)
     }
 
+    pub fn count(&self) -> u64 {
+        self.count
+    }
+
     /// Retrieve the size of the entries
     pub fn entries_size(&self) -> Result<u64, Error> {
         let entry_size = u64::try_from(mem::size_of::<Entry>())?;
@@ -91,6 +96,17 @@ impl Header {
     /// Parse entries from raw entries data without verification
     pub unsafe fn entries_unchecked<'a>(data: &'a [u8]) -> Result<&'a [Entry], Error> {
         Ok(plain::slice_from_bytes(data)?)
+    }
+}
+
+impl fmt::Debug for Header {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Header {{\n\tsignature: {:?},\n\tpublic_key: {:?},\n\tblake3: {:?},count: {:?},\n}}",
+            &self.signature[..],
+            self.public_key,
+            self.blake3,
+            self.count(),
+        )
     }
 }
 

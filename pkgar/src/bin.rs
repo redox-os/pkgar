@@ -221,8 +221,8 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
 pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<(), Error> {
     let public_key = PublicKeyFile::open(&public_path.as_ref())?.pkey;
 
-    let mut package = PackageFile::new(archive_path)?;
-    let entries = package.entries(&public_key)?;
+    let mut package = PackageFile::new(archive_path, &public_key)?;
+    let entries = package.read_entries()?;
 
     // TODO: Validate that all entries can be installed, before installing
 
@@ -299,7 +299,7 @@ pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<()
         if total != entry.size {
             return Err(Error::Io(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!("Copied {} instead of {}", total, entry.size)
+                format!("Copied {} instead of {}", total, entry.size())
             )));
         }
         if entry_hash != hash {
@@ -321,8 +321,8 @@ pub fn list(public_path: &str, archive_path: &str) -> Result<(), Error> {
     let public_key = PublicKeyFile::open(&public_path.as_ref())?.pkey;
 
     // Read header first
-    let mut package = PackageFile::new(archive_path)?;
-    let entries = package.entries(&public_key)?;
+    let mut package = PackageFile::new(archive_path, &public_key)?;
+    let entries = package.read_entries()?;
     for entry in entries {
         let relative = Path::new(OsStr::from_bytes(entry.path()));
         println!("{}", relative.display());
