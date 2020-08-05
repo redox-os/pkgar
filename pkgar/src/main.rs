@@ -4,6 +4,7 @@ use clap::{App, AppSettings, Arg, crate_authors, crate_description, crate_name, 
 use pkgar::bin::{
     create,
     extract,
+    remove,
     list,
 };
 use pkgar_keys::{DEFAULT_PUBKEY, DEFAULT_SECKEY};
@@ -44,6 +45,12 @@ fn main() {
         .takes_value(true)
         .value_name("FILE");
 
+    let arg_basedir = Arg::with_name("basedir")
+        .help("Directory to unpack to (defaults to '.')")
+        .required(true)
+        .value_name("DIR")
+        .default_value(".");
+
     let matches = App::new(crate_name!())
         .author(crate_authors!(", "))
         .about(crate_description!())
@@ -53,28 +60,24 @@ fn main() {
             .about("Create archive")
             .arg(&arg_skey)
             .arg(&arg_archive)
-            .arg(Arg::with_name("basedir")
-                .help("Directory to archive (defaults to '.')")
-                .required(true)
-                .value_name("DIR")
-                .default_value(".")
-            )
+            .arg(&arg_basedir)
         )
         .subcommand(SubCommand::with_name("extract")
             .about("Extract archive")
             .arg(&arg_pkey)
             .arg(&arg_archive)
-            .arg(Arg::with_name("basedir")
-                .help("Directory to unpack to (defaults to '.')")
-                .required(true)
-                .value_name("DIR")
-                .default_value(".")
-            )
+            .arg(&arg_basedir)
         )
         .subcommand(SubCommand::with_name("list")
             .about("List archive")
             .arg(&arg_pkey)
             .arg(&arg_archive)
+        )
+        .subcommand(SubCommand::with_name("remove")
+            .about("Unextract archive")
+            .arg(&arg_pkey)
+            .arg(&arg_archive)
+            .arg(&arg_basedir)
         )
         .get_matches();
 
@@ -89,6 +92,12 @@ fn main() {
             matches.value_of("pkey").unwrap(),
             matches.value_of("archive").unwrap(),
             matches.value_of("basedir").unwrap()
+        )
+    } else if let Some(matches) = matches.subcommand_matches("remove") {
+        remove(
+            matches.value_of("pkey").unwrap(),
+            matches.value_of("archive").unwrap(),
+            matches.value_of("basedir").unwrap(),
         )
     } else if let Some(matches) = matches.subcommand_matches("list") {
         list(

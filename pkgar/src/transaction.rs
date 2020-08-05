@@ -1,16 +1,17 @@
-use std::io;
+use std::io::{self, Read};
 use std::ffi::OsStr;
-use std::fs;
+use std::fs::{self, File};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{symlink, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
-use blake3::Hash;
+use blake3::{Hash, Hasher};
 use pkgar_core::PackageSrc;
 
 use crate::{Error, MODE_FILE, MODE_KIND, MODE_PERM, MODE_SYMLINK};
-use crate::bin::copy_entry_and_hash;
-use crate::ext::EntryExt;
+use crate::ext::{EntryExt, PackageSrcExt};
+
+const READ_WRITE_HASH_BUF_SIZE: usize = 4 * 1024 * 1024;
 
 /// Returns `None` if the target path has no parent (was `/`)
 fn temp_path(target_path: impl AsRef<Path>, entry_hash: Hash) -> Result<PathBuf, Error> {
@@ -32,6 +33,18 @@ fn temp_path(target_path: impl AsRef<Path>, entry_hash: Hash) -> Result<PathBuf,
             source: e,
         })?;
     Ok(parent.join(tmp_name))
+}
+
+fn hash<R: Read>(mut read: R, buf: &mut [u8]) -> Result<Hash, io::Error> {
+    let mut hasher = Hasher::new();
+    loop {
+        let count = read.read(buf)?;
+        if count == 0 {
+            break;
+        }
+        hasher.update_with_join::<blake3::join::RayonJoin>(&buf[..count]);
+    }
+    Ok(hasher.finalize())
 }
 
 enum Action {
@@ -72,7 +85,7 @@ impl Transaction {
         Pkg: PackageSrc<Err = Error>,
         Pth: AsRef<Path>,
     {
-        let mut buf = vec![0; 4 * 1024 * 1024];
+        let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
         
         for entry in src.read_entries()? {
             let relative_path = entry.check_path()?;
@@ -100,11 +113,11 @@ impl Transaction {
                             file: PathBuf::from(&tmp_path),
                             source: e,
                         })?;
-                    copy_entry_and_hash(src, entry, &mut tmp_file, &mut buf)?
+                    src.copy_entry_and_hash(entry, &mut tmp_file, &mut buf)?
                 },
                 MODE_SYMLINK => {
                     let mut data = Vec::new();
-                    let (size, hash) = copy_entry_and_hash(src, entry, &mut data, &mut buf)?;
+                    let (size, hash) = src.copy_entry_and_hash(entry, &mut data, &mut buf)?;
                     let sym_target: &OsStr = OsStrExt::from_bytes(data.as_slice());
                     symlink(sym_target, &tmp_path)
                         .map_err(|e| Error::Io {
@@ -137,7 +150,7 @@ impl Transaction {
         Ok(())
     }
     
-    pub fn upgrade<Pkg, Pth>(&mut self, old: &mut Pkg, new: Pkg, basedir: Pth) -> Result<(), Error>
+    pub fn upgrade<Pkg, Pth>(&mut self, old: &mut Pkg, new: Pkg, base_dir: Pth) -> Result<(), Error>
     where
         Pkg: PackageSrc<Err = Error>,
         Pth: AsRef<Path>,
@@ -145,12 +158,36 @@ impl Transaction {
         unimplemented!();
     }
     
-    pub fn remove<Pkg, Pth>(&mut self, pkg: &mut Pkg, basedir: Pth) -> Result<(), Error>
+    pub fn remove<Pkg, Pth>(&mut self, pkg: &mut Pkg, base_dir: Pth) -> Result<(), Error>
     where
         Pkg: PackageSrc<Err = Error>,
         Pth: AsRef<Path>,
     {
-        unimplemented!();
+        let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
+
+        for entry in pkg.read_entries()? {
+            let relative_path = entry.check_path()?;
+            
+            let target_path = base_dir.as_ref().join(relative_path);
+            // Under what circumstances could this ever fail?
+            assert!(target_path.starts_with(&base_dir), "target path was not in the base path");
+            
+            let candidate = File::open(&target_path)
+                .map_err(|e| Error::Io {
+                    reason: "Opening file for hashing".to_string(),
+                    file: PathBuf::from(&target_path),
+                    source: e,
+                })?;
+            hash(candidate, &mut buf)
+                .map_err(|e| Error::Io {
+                    reason: "Hashing file".to_string(),
+                    file: PathBuf::from(&target_path),
+                    source: e,
+                })?;
+            
+            self.actions.push(Action::Remove(target_path));
+        }
+        Ok(())
     }
     
     pub fn commit(&mut self) -> Result<usize, Error> {

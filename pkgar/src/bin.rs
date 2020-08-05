@@ -15,7 +15,7 @@ use crate::ext::EntryExt;
 use crate::package::PackageFile;
 use crate::transaction::Transaction;
 
-//TODO: Refactor to reduce duplication between these functions
+//TODO: Refactor to reduce duplication between this and PackageSrcExt
 fn copy_and_hash<R: Read, W: Write>(mut read: R, mut write: W, buf: &mut [u8]) -> Result<(u64, Hash), Error> {
     let mut hasher = Hasher::new();
     let mut total = 0;
@@ -34,35 +34,6 @@ fn copy_and_hash<R: Read, W: Write>(mut read: R, mut write: W, buf: &mut [u8]) -
         write.write_all(&buf[..count])
             .map_err(|e| Error::Io {
                 reason: "Copy file".to_string(),
-                file: PathBuf::new(),
-                source: e,
-            })?;
-        hasher.update_with_join::<blake3::join::RayonJoin>(&buf[..count]);
-    }
-    Ok((total, hasher.finalize()))
-}
-
-pub(crate) fn copy_entry_and_hash<P, W>(
-    src: &mut P,
-    entry: Entry,
-    mut write: W,
-    buf: &mut [u8]
-) -> Result<(u64, Hash), Error>
-where
-    P: PackageSrc<Err = Error>,
-    W: Write,
-{
-    let mut hasher = Hasher::new();
-    let mut total = 0;
-    loop {
-        let count = src.read_entry(entry, total, buf)?;
-        if count == 0 {
-            break;
-        }
-        total += count as u64;
-        write.write_all(&buf[..count])
-            .map_err(|e| Error::Io {
-                reason: "Copy entry".to_string(),
                 file: PathBuf::new(),
                 source: e,
             })?;
@@ -274,24 +245,36 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
     Ok(())
 }
 
-pub fn extract(public_path: &str, archive_path: &str, folder: &str) -> Result<(), Error> {
-    let public_key = PublicKeyFile::open(&public_path.as_ref())?.pkey;
+pub fn extract(pkey_path: &str, archive_path: &str, base_dir: &str) -> Result<(), Error> {
+    let pkey = PublicKeyFile::open(&pkey_path.as_ref())?.pkey;
 
-    let mut package = PackageFile::new(archive_path, &public_key)?;
-    
+    let mut package = PackageFile::new(archive_path, &pkey)?;
+
     let mut transaction = Transaction::new();
-    transaction.install(&mut package, folder)?;
+    transaction.install(&mut package, base_dir)?;
     transaction.commit()?;
 
     Ok(())
 }
 
-pub fn list(public_path: &str, archive_path: &str) -> Result<(), Error> {
-    let public_key = PublicKeyFile::open(&public_path.as_ref())?.pkey;
+pub fn remove(pkey_path: &str, archive_path: &str, base_dir: &str) -> Result<(), Error> {
+    let pkey = PublicKeyFile::open(&pkey_path.as_ref())?.pkey;
 
-    let mut package = PackageFile::new(archive_path, &public_key)?;
+    let mut package = PackageFile::new(archive_path, &pkey)?;
+
+    let mut transaction = Transaction::new();
+    transaction.remove(&mut package, base_dir)?;
+    transaction.commit()?;
+
+    Ok(())
+}
+
+pub fn list(pkey_path: &str, archive_path: &str) -> Result<(), Error> {
+    let pkey = PublicKeyFile::open(&pkey_path.as_ref())?.pkey;
+
+    let mut package = PackageFile::new(archive_path, &pkey)?;
     for entry in package.read_entries()? {
-        let relative = Path::new(OsStr::from_bytes(entry.path()));
+        let relative = entry.check_path()?;
         println!("{}", relative.display());
     }
 
