@@ -1,7 +1,11 @@
-pub mod bin;
+mod bin;
 pub mod ext;
-pub mod package;
-pub mod transaction;
+mod package;
+mod transaction;
+
+pub use bin::*;
+pub use package::*;
+pub use transaction::*;
 
 use std::io;
 use std::path::PathBuf;

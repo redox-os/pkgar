@@ -1,4 +1,3 @@
-use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::unix::ffi::OsStrExt;
@@ -103,10 +102,14 @@ fn folder_entries<P, Q>(base: P, path: Q, entries: &mut Vec<Entry>) -> io::Resul
     Ok(())
 }
 
-pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(), Error> {
+pub fn create(
+    secret_path: impl AsRef<Path>,
+    archive_path: impl AsRef<Path>,
+    folder: impl AsRef<Path>,
+) -> Result<(), Error> {
     let secret_key = pkgar_keys::get_skey(&secret_path.as_ref())?
         .key()
-        .expect(&format!("{} was encrypted?", secret_path));
+        .expect(&format!("{} was encrypted?", secret_path.as_ref().display()));
 
     //TODO: move functions to library
 
@@ -114,19 +117,19 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
         .write(true)
         .create(true)
         .truncate(true)
-        .open(archive_path)
+        .open(&archive_path)
         .map_err(|e| Error::Io {
             reason: "Write archive".to_string(),
-            file: PathBuf::from(archive_path),
+            file: archive_path.as_ref().to_path_buf(),
             source: e,
         })?;
 
     // Create a list of entries
     let mut entries = Vec::new();
-    folder_entries(folder, folder, &mut entries)
+    folder_entries(&folder, &folder, &mut entries)
         .map_err(|e| Error::Io {
             reason: "Recursing buildroot".to_string(),
-            file: PathBuf::from(folder),
+            file: folder.as_ref().to_path_buf(),
             source: e,
         })?;
 
@@ -152,7 +155,7 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
     archive_file.seek(SeekFrom::Start(data_offset as u64))
         .map_err(|e| Error::Io {
             reason: format!("Seek to {} (data offset)", data_offset),
-            file: PathBuf::from(archive_path),
+            file: archive_path.as_ref().to_path_buf(),
             source: e,
         })?;
     //TODO: fallocate data_offset + data_size
@@ -161,8 +164,8 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
     let mut header_hasher = blake3::Hasher::new();
     let mut buf = vec![0; 4 * 1024 * 1024];
     for entry in &mut entries {
-        let relative = Path::new(OsStr::from_bytes(entry.path()));
-        let path = Path::new(folder).join(relative);
+        let relative = entry.check_path()?;
+        let path = folder.as_ref().join(relative);
 
         let mode_kind = entry.mode & MODE_KIND;
         let (total, hash) = match mode_kind {
@@ -172,7 +175,7 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
                     .open(&path)
                     .map_err(|e| Error::Io {
                         reason: "Read source file".to_string(),
-                        file: PathBuf::from(&path),
+                        file: path.clone(),
                         source: e,
                     })?;
                 copy_and_hash(&mut entry_file, &mut archive_file, &mut buf)?
@@ -181,7 +184,7 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
                 let destination = fs::read_link(&path)
                     .map_err(|e| Error::Io {
                         reason: "Read source link".to_string(),
-                        file: PathBuf::from(&path),
+                        file: path.clone(),
                         source: e,
                     })?;
                 let mut data = destination.as_os_str().as_bytes();
@@ -189,14 +192,14 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
             },
             _ => {
                 return Err(Error::UnsupportedMode {
-                    entry: PathBuf::from(relative),
+                    entry: relative.to_path_buf(),
                     mode: entry.mode(),
                 });
             }
         };
         if total != entry.size() {
             return Err(Error::LengthMismatch {
-                entry: PathBuf::from(relative),
+                entry: relative.to_path_buf(),
                 actual: total,
                 expected: entry.size(),
             });
@@ -217,7 +220,7 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
     archive_file.seek(SeekFrom::Start(0))
         .map_err(|e| Error::Io {
             reason: "Seek to start".to_string(),
-            file: PathBuf::from(archive_path),
+            file: archive_path.as_ref().to_path_buf(),
             source: e,
         })?;
     archive_file.write_all(unsafe {
@@ -225,7 +228,7 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
     })
         .map_err(|e| Error::Io {
             reason: "Write header".to_string(),
-            file: PathBuf::from(archive_path),
+            file: archive_path.as_ref().to_path_buf(),
             source: e,
         })?;
 
@@ -237,7 +240,7 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
         })
             .map_err(|e| Error::Io {
                 reason: format!("Write entry {}", checked_path.display()),
-                file: PathBuf::from(archive_path),
+                file: archive_path.as_ref().to_path_buf(),
                 source: e,
             })?;
     }
@@ -245,7 +248,11 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
     Ok(())
 }
 
-pub fn extract(pkey_path: &str, archive_path: &str, base_dir: &str) -> Result<(), Error> {
+pub fn extract(
+    pkey_path: impl AsRef<Path>,
+    archive_path: impl AsRef<Path>,
+    base_dir: impl AsRef<Path>,
+) -> Result<(), Error> {
     let pkey = PublicKeyFile::open(&pkey_path.as_ref())?.pkey;
 
     let mut package = PackageFile::new(archive_path, &pkey)?;
@@ -257,7 +264,11 @@ pub fn extract(pkey_path: &str, archive_path: &str, base_dir: &str) -> Result<()
     Ok(())
 }
 
-pub fn remove(pkey_path: &str, archive_path: &str, base_dir: &str) -> Result<(), Error> {
+pub fn remove(
+    pkey_path: impl AsRef<Path>,
+    archive_path: impl AsRef<Path>,
+    base_dir: impl AsRef<Path>,
+) -> Result<(), Error> {
     let pkey = PublicKeyFile::open(&pkey_path.as_ref())?.pkey;
 
     let mut package = PackageFile::new(archive_path, &pkey)?;
@@ -269,7 +280,10 @@ pub fn remove(pkey_path: &str, archive_path: &str, base_dir: &str) -> Result<(),
     Ok(())
 }
 
-pub fn list(pkey_path: &str, archive_path: &str) -> Result<(), Error> {
+pub fn list(
+    pkey_path: impl AsRef<Path>,
+    archive_path: impl AsRef<Path>,
+) -> Result<(), Error> {
     let pkey = PublicKeyFile::open(&pkey_path.as_ref())?.pkey;
 
     let mut package = PackageFile::new(archive_path, &pkey)?;

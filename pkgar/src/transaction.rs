@@ -150,12 +150,29 @@ impl Transaction {
         Ok(())
     }
     
-    pub fn upgrade<Pkg, Pth>(&mut self, old: &mut Pkg, new: Pkg, base_dir: Pth) -> Result<(), Error>
+    pub fn upgrade<Pkg, Pth>(&mut self, old: &mut Pkg, new: &mut Pkg, base_dir: Pth) -> Result<(), Error>
     where
         Pkg: PackageSrc<Err = Error>,
         Pth: AsRef<Path>,
     {
-        unimplemented!();
+        let old_entries = old.read_entries()?;
+        let new_entries = new.read_entries()?;
+        
+        // All the files that are present in old but not in new
+        let mut removes = old_entries.iter()
+            .filter(|old_e| new_entries.iter()
+                .find(|new_e| new_e.blake3() == old_e.blake3() )
+                .is_none())
+            .map(|e| {
+                let target_path = base_dir.as_ref()
+                    .join(e.check_path()?);
+                Ok(Action::Remove(target_path))
+            })
+            .collect::<Result<Vec<Action>, Error>>()?;
+        self.actions.append(&mut removes);
+        
+        //TODO: Don't force a re-read of all the entries for the new package
+        self.install(new, base_dir)
     }
     
     pub fn remove<Pkg, Pth>(&mut self, pkg: &mut Pkg, base_dir: Pth) -> Result<(), Error>

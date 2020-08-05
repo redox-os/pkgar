@@ -1,7 +1,7 @@
 use std::process;
 
 use clap::{App, AppSettings, Arg, crate_authors, crate_description, crate_name, crate_version, SubCommand};
-use pkgar::bin::{
+use pkgar::{
     create,
     extract,
     remove,
