@@ -17,8 +17,13 @@ pub(crate) const MODE_SYMLINK: u32 = 0o120000;
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error(transparent)]
-    Io(#[from] io::Error),
+    #[error("{reason}: {file}")]
+    Io {
+        reason: String,
+        file: PathBuf,
+        #[source]
+        source: io::Error,
+    },
     
     #[error(transparent)]
     Keys(#[from] pkgar_keys::Error),

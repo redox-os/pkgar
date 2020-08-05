@@ -3,7 +3,7 @@ use std::fs;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use blake3::{Hash, Hasher};
 use pkgar_core::{Entry, Header, PackageSrc};
@@ -11,6 +11,7 @@ use pkgar_keys::PublicKeyFile;
 use sodiumoxide::crypto::sign;
 
 use crate::{Error, MODE_PERM, MODE_KIND, MODE_FILE, MODE_SYMLINK};
+use crate::ext::EntryExt;
 use crate::package::PackageFile;
 use crate::transaction::Transaction;
 
@@ -19,13 +20,23 @@ fn copy_and_hash<R: Read, W: Write>(mut read: R, mut write: W, buf: &mut [u8]) -
     let mut hasher = Hasher::new();
     let mut total = 0;
     loop {
-        let count = read.read(buf)?;
+        let count = read.read(buf)
+            .map_err(|e| Error::Io {
+                reason: "Read file for copy".to_string(),
+                file: PathBuf::new(),
+                source: e,
+            })?;
         if count == 0 {
             break;
         }
         total += count as u64;
         //TODO: Progress
-        write.write_all(&buf[..count])?;
+        write.write_all(&buf[..count])
+            .map_err(|e| Error::Io {
+                reason: "Copy file".to_string(),
+                file: PathBuf::new(),
+                source: e,
+            })?;
         hasher.update_with_join::<blake3::join::RayonJoin>(&buf[..count]);
     }
     Ok((total, hasher.finalize()))
@@ -49,7 +60,12 @@ where
             break;
         }
         total += count as u64;
-        write.write_all(&buf[..count])?;
+        write.write_all(&buf[..count])
+            .map_err(|e| Error::Io {
+                reason: "Copy entry".to_string(),
+                file: PathBuf::new(),
+                source: e,
+            })?;
         hasher.update_with_join::<blake3::join::RayonJoin>(&buf[..count]);
     }
     Ok((total, hasher.finalize()))
@@ -127,11 +143,21 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
         .write(true)
         .create(true)
         .truncate(true)
-        .open(archive_path)?;
+        .open(archive_path)
+        .map_err(|e| Error::Io {
+            reason: "Write archive".to_string(),
+            file: PathBuf::from(archive_path),
+            source: e,
+        })?;
 
     // Create a list of entries
     let mut entries = Vec::new();
-    folder_entries(folder, folder, &mut entries)?;
+    folder_entries(folder, folder, &mut entries)
+        .map_err(|e| Error::Io {
+            reason: "Recursing buildroot".to_string(),
+            file: PathBuf::from(folder),
+            source: e,
+        })?;
 
     // Create initial header
     let mut header = Header {
@@ -151,9 +177,13 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
             .ok_or(Error::Core(pkgar_core::Error::Overflow))?;
     }
 
-    // Seek to data offset
     let data_offset = header.total_size()?;
-    archive_file.seek(SeekFrom::Start(data_offset as u64))?;
+    archive_file.seek(SeekFrom::Start(data_offset as u64))
+        .map_err(|e| Error::Io {
+            reason: format!("Seek to {} (data offset)", data_offset),
+            file: PathBuf::from(archive_path),
+            source: e,
+        })?;
     //TODO: fallocate data_offset + data_size
 
     // Stream each file, writing data and calculating b3sums
@@ -168,26 +198,37 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
             MODE_FILE => {
                 let mut entry_file = fs::OpenOptions::new()
                     .read(true)
-                    .open(path)?;
+                    .open(&path)
+                    .map_err(|e| Error::Io {
+                        reason: "Read source file".to_string(),
+                        file: PathBuf::from(&path),
+                        source: e,
+                    })?;
                 copy_and_hash(&mut entry_file, &mut archive_file, &mut buf)?
             },
             MODE_SYMLINK => {
-                let destination = fs::read_link(path)?;
+                let destination = fs::read_link(&path)
+                    .map_err(|e| Error::Io {
+                        reason: "Read source link".to_string(),
+                        file: PathBuf::from(&path),
+                        source: e,
+                    })?;
                 let mut data = destination.as_os_str().as_bytes();
                 copy_and_hash(&mut data, &mut archive_file, &mut buf)?
             },
             _ => {
-                return Err(Error::Io(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("Unsupported mode {:#o}", { entry.mode })
-                )));
+                return Err(Error::UnsupportedMode {
+                    entry: PathBuf::from(relative),
+                    mode: entry.mode(),
+                });
             }
         };
-        if total != { entry.size } {
-            return Err(Error::Io(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("Copied {} instead of {}", total, { entry.size })
-            )));
+        if total != entry.size() {
+            return Err(Error::LengthMismatch {
+                entry: PathBuf::from(relative),
+                actual: total,
+                expected: entry.size(),
+            });
         }
         entry.blake3.copy_from_slice(hash.as_bytes());
 
@@ -202,16 +243,32 @@ pub fn create(secret_path: &str, archive_path: &str, folder: &str) -> Result<(),
     header.signature = sign::sign_detached(unsafe { &plain::as_bytes(&header)[64..] }, &secret_key).0;
 
     // Write archive header
-    archive_file.seek(SeekFrom::Start(0))?;
+    archive_file.seek(SeekFrom::Start(0))
+        .map_err(|e| Error::Io {
+            reason: "Seek to start".to_string(),
+            file: PathBuf::from(archive_path),
+            source: e,
+        })?;
     archive_file.write_all(unsafe {
         plain::as_bytes(&header)
-    })?;
+    })
+        .map_err(|e| Error::Io {
+            reason: "Write header".to_string(),
+            file: PathBuf::from(archive_path),
+            source: e,
+        })?;
 
     // Write each entry header
     for entry in &entries {
+        let checked_path = entry.check_path()?;
         archive_file.write_all(unsafe {
             plain::as_bytes(entry)
-        })?;
+        })
+            .map_err(|e| Error::Io {
+                reason: format!("Write entry {}", checked_path.display()),
+                file: PathBuf::from(archive_path),
+                source: e,
+            })?;
     }
 
     Ok(())
@@ -233,8 +290,7 @@ pub fn list(public_path: &str, archive_path: &str) -> Result<(), Error> {
     let public_key = PublicKeyFile::open(&public_path.as_ref())?.pkey;
 
     let mut package = PackageFile::new(archive_path, &public_key)?;
-    let entries = package.read_entries()?;
-    for entry in entries {
+    for entry in package.read_entries()? {
         let relative = Path::new(OsStr::from_bytes(entry.path()));
         println!("{}", relative.display());
     }

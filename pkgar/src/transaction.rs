@@ -13,14 +13,25 @@ use crate::bin::copy_entry_and_hash;
 use crate::ext::EntryExt;
 
 /// Returns `None` if the target path has no parent (was `/`)
-fn temp_path(target_path: impl AsRef<Path>, entry_hash: Hash) -> Option<PathBuf> {
+fn temp_path(target_path: impl AsRef<Path>, entry_hash: Hash) -> Result<PathBuf, Error> {
     let tmp_name = if let Some(filename) = target_path.as_ref().file_name() {
         format!(".pkgar.{}", Path::new(filename).display())
     } else {
         format!(".pkgar.{}", entry_hash.to_hex())
     };
-    target_path.as_ref().parent()
-        .map(|parent| parent.join(tmp_name) )
+    
+    let parent = target_path.as_ref().parent()
+        .ok_or(Error::InvalidPath {
+            entry: PathBuf::from(target_path.as_ref()),
+            component: PathBuf::from("/"),
+        })?;
+    fs::create_dir_all(&parent)
+        .map_err(|e| Error::Io {
+            reason: "Create target dir".to_string(),
+            file: PathBuf::from(parent),
+            source: e,
+        })?;
+    Ok(parent.join(tmp_name))
 }
 
 enum Action {
@@ -71,12 +82,8 @@ impl Transaction {
             assert!(target_path.starts_with(&basedir), "target path was not in the base path");
             
             let entry_hash = Hash::from(entry.blake3());
-            let tmp_path = temp_path(&target_path, entry_hash)
-                .ok_or(Error::InvalidPath {
-                    entry: PathBuf::from(relative_path),
-                    component: PathBuf::from("/"),
-                })?;
-
+            let tmp_path = temp_path(&target_path, entry_hash)?;
+            
             let mode_kind = entry.mode() & MODE_KIND;
             let mode_perm = entry.mode() & MODE_PERM;
             let (entry_data_size, entry_data_hash) = match mode_kind {
@@ -87,14 +94,24 @@ impl Transaction {
                         .create(true)
                         .truncate(true)
                         .mode(mode_perm)
-                        .open(&tmp_path)?;
+                        .open(&tmp_path)
+                        .map_err(|e| Error::Io {
+                            reason: "Creating temp file".to_string(),
+                            file: PathBuf::from(&tmp_path),
+                            source: e,
+                        })?;
                     copy_entry_and_hash(src, entry, &mut tmp_file, &mut buf)?
                 },
                 MODE_SYMLINK => {
                     let mut data = Vec::new();
                     let (size, hash) = copy_entry_and_hash(src, entry, &mut data, &mut buf)?;
                     let sym_target: &OsStr = OsStrExt::from_bytes(data.as_slice());
-                    symlink(sym_target, &tmp_path)?;
+                    symlink(sym_target, &tmp_path)
+                        .map_err(|e| Error::Io {
+                            reason: format!("Symlinking to {}", tmp_path.display()),
+                            file: PathBuf::from(sym_target),
+                            source: e,
+                        })?;
                     (size, hash)
                 },
                 _ => {
