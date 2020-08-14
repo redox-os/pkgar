@@ -1,15 +1,15 @@
-use std::io::{self, Read};
+use std::io;
 use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{symlink, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
-use blake3::{Hash, Hasher};
+use blake3::Hash;
 use pkgar_core::PackageSrc;
 
 use crate::{Error, MODE_FILE, MODE_KIND, MODE_PERM, MODE_SYMLINK};
-use crate::ext::{EntryExt, PackageSrcExt};
+use crate::ext::{copy_and_hash, EntryExt, PackageSrcExt};
 
 const READ_WRITE_HASH_BUF_SIZE: usize = 4 * 1024 * 1024;
 
@@ -33,18 +33,6 @@ fn temp_path(target_path: impl AsRef<Path>, entry_hash: Hash) -> Result<PathBuf,
             source: e,
         })?;
     Ok(parent.join(tmp_name))
-}
-
-fn hash<R: Read>(mut read: R, buf: &mut [u8]) -> Result<Hash, io::Error> {
-    let mut hasher = Hasher::new();
-    loop {
-        let count = read.read(buf)?;
-        if count == 0 {
-            break;
-        }
-        hasher.update_with_join::<blake3::join::RayonJoin>(&buf[..count]);
-    }
-    Ok(hasher.finalize())
 }
 
 enum Action {
@@ -113,11 +101,21 @@ impl Transaction {
                             file: PathBuf::from(&tmp_path),
                             source: e,
                         })?;
-                    src.copy_entry_and_hash(entry, &mut tmp_file, &mut buf)?
+                    copy_and_hash(src.entry_reader(entry), Some(&mut tmp_file), &mut buf)
+                        .map_err(|source| Error::Io {
+                            reason: format!("Copying entry to tempfile: '{}'", relative_path.display()),
+                            file: tmp_path.to_path_buf(),
+                            source,
+                        })?
                 },
                 MODE_SYMLINK => {
                     let mut data = Vec::new();
-                    let (size, hash) = src.copy_entry_and_hash(entry, &mut data, &mut buf)?;
+                    let (size, hash) = copy_and_hash(src.entry_reader(entry), Some(&mut data), &mut buf)
+                        .map_err(|source| Error::Io {
+                            reason: format!("Copying entry to tempfile: '{}'", relative_path.display()),
+                            file: tmp_path.to_path_buf(),
+                            source,
+                        })?;
                     let sym_target: &OsStr = OsStrExt::from_bytes(data.as_slice());
                     symlink(sym_target, &tmp_path)
                         .map_err(|e| Error::Io {
@@ -195,11 +193,11 @@ impl Transaction {
                     file: PathBuf::from(&target_path),
                     source: e,
                 })?;
-            hash(candidate, &mut buf)
-                .map_err(|e| Error::Io {
-                    reason: "Hashing file".to_string(),
+            copy_and_hash::<_, io::Sink>(candidate, None, &mut buf)
+                .map_err(|source| Error::Io {
+                    reason: format!("Hashing file for entry: '{}'", relative_path.display()),
                     file: PathBuf::from(&target_path),
-                    source: e,
+                    source,
                 })?;
             
             self.actions.push(Action::Remove(target_path));

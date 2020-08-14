@@ -1,8 +1,8 @@
 //! Extention traits for base types defined in `pkgar-core`.
-use std::io::Write;
+use std::io::{self, Read, Write};
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, Path};
 
 use blake3::{Hash, Hasher};
 use pkgar_core::{Entry, PackageSrc};
@@ -34,39 +34,72 @@ impl EntryExt for Entry {
     }
 }
 
-pub(crate) trait PackageSrcExt {
-    fn copy_entry_and_hash<W: Write>(
-        &mut self,
-        entry: Entry,
-        write: W,
-        buf: &mut [u8],
-    ) -> Result<(u64, Hash), Error>;
+//TODO: Fix the types for this
+pub trait PackageSrcExt<Src>
+where Src: PackageSrc<Err = Error>,
+{
+    fn entry_reader(&mut self, entry: Entry) -> EntryReader<'_, Src>;
 }
 
-impl<T: PackageSrc<Err = Error>> PackageSrcExt for T {
-    fn copy_entry_and_hash<W: Write>(
-        &mut self,
-        entry: Entry,
-        mut write: W,
-        buf: &mut [u8]
-    ) -> Result<(u64, Hash), Error> {
-        let mut hasher = Hasher::new();
-        let mut total = 0;
-        loop {
-            let count = self.read_entry(entry, total, buf)?;
-            if count == 0 {
-                break;
-            }
-            total += count as u64;
-            write.write_all(&buf[..count])
-                .map_err(|e| Error::Io {
-                    reason: "Copy entry".to_string(),
-                    file: PathBuf::new(),
-                    source: e,
-                })?;
-            hasher.update_with_join::<blake3::join::RayonJoin>(&buf[..count]);
+impl<Src> PackageSrcExt<Src> for Src
+where Src: PackageSrc<Err = Error>,
+{
+    fn entry_reader(&mut self, entry: Entry) -> EntryReader<'_, Src> {
+        EntryReader {
+            src: self,
+            entry,
+            pos: 0,
         }
-        Ok((total, hasher.finalize()))
     }
+}
+
+/// A reader that provides acess to one entry's data within a `PackageSrc`.
+/// Use `PackageSrcExt::entry_reader` for construction
+//TODO: Fix the types for this
+pub struct EntryReader<'a, Src>
+where Src: PackageSrc<Err = Error>,
+{
+    src: &'a mut Src,
+    entry: Entry,
+    pos: usize,
+}
+
+impl<Src> Read for EntryReader<'_, Src>
+where Src: PackageSrc<Err = Error>,
+{
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let count = self.src.read_entry(self.entry, self.pos, buf)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e) )?;
+        self.pos += count;
+        Ok(count)
+    }
+}
+
+/// Copy the contents of `read` into `write` by streaming through buf.
+/// The basic function of this function is analogous to io::copy, except it
+/// outputs the blake3 hash of the data streamed, and also does not allocate.
+pub(crate) fn copy_and_hash<R: Read, W: Write>(
+    mut read: R,
+    mut write: Option<W>,
+    buf: &mut [u8]
+) -> Result<(u64, Hash), io::Error> {
+    let mut hasher = Hasher::new();
+    let mut written = 0;
+    loop {
+        let count = read.read(buf)?;
+        if count == 0 {
+            break;
+        }
+        written += count as u64;
+        hasher.update_with_join::<blake3::join::RayonJoin>(&buf[..count]);
+        
+        //TODO: Progress
+        // After some naive testing it doesn't seem to make much difference to
+        // use dynamic dispatch instead of checking every iteration
+        if let Some(ref mut write) = write {
+            write.write_all(&buf[..count])?;
+        }
+    }
+    Ok((written, hasher.finalize()))
 }
 

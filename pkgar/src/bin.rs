@@ -1,45 +1,17 @@
 use std::fs;
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{self, Seek, SeekFrom, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use blake3::{Hash, Hasher};
 use pkgar_core::{Entry, Header, PackageSrc};
 use pkgar_keys::PublicKeyFile;
 use sodiumoxide::crypto::sign;
 
 use crate::{Error, MODE_PERM, MODE_KIND, MODE_FILE, MODE_SYMLINK};
-use crate::ext::EntryExt;
+use crate::ext::{copy_and_hash, EntryExt};
 use crate::package::PackageFile;
 use crate::transaction::Transaction;
-
-//TODO: Refactor to reduce duplication between this and PackageSrcExt
-fn copy_and_hash<R: Read, W: Write>(mut read: R, mut write: W, buf: &mut [u8]) -> Result<(u64, Hash), Error> {
-    let mut hasher = Hasher::new();
-    let mut total = 0;
-    loop {
-        let count = read.read(buf)
-            .map_err(|e| Error::Io {
-                reason: "Read file for copy".to_string(),
-                file: PathBuf::new(),
-                source: e,
-            })?;
-        if count == 0 {
-            break;
-        }
-        total += count as u64;
-        //TODO: Progress
-        write.write_all(&buf[..count])
-            .map_err(|e| Error::Io {
-                reason: "Copy file".to_string(),
-                file: PathBuf::new(),
-                source: e,
-            })?;
-        hasher.update_with_join::<blake3::join::RayonJoin>(&buf[..count]);
-    }
-    Ok((total, hasher.finalize()))
-}
 
 fn folder_entries<P, Q>(base: P, path: Q, entries: &mut Vec<Entry>) -> io::Result<()>
     where P: AsRef<Path>, Q: AsRef<Path>
@@ -178,7 +150,12 @@ pub fn create(
                         file: path.clone(),
                         source: e,
                     })?;
-                copy_and_hash(&mut entry_file, &mut archive_file, &mut buf)?
+                copy_and_hash(&mut entry_file, Some(&mut archive_file), &mut buf)
+                    .map_err(|source| Error::Io {
+                        reason: format!("Writing entry to archive: '{}'", relative.display()),
+                        file: path.clone(),
+                        source,
+                    })?
             },
             MODE_SYMLINK => {
                 let destination = fs::read_link(&path)
@@ -188,7 +165,12 @@ pub fn create(
                         source: e,
                     })?;
                 let mut data = destination.as_os_str().as_bytes();
-                copy_and_hash(&mut data, &mut archive_file, &mut buf)?
+                copy_and_hash(&mut data, Some(&mut archive_file), &mut buf)
+                    .map_err(|source| Error::Io {
+                        reason: format!("Writing entry to archive: '{}'", relative.display()),
+                        file: path.clone(),
+                        source,
+                    })?
             },
             _ => {
                 return Err(Error::UnsupportedMode {
