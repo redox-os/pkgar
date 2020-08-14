@@ -1,6 +1,7 @@
 //! The packed structs represent the on-disk format of pkgar
 
 use core::convert::TryFrom;
+use core::fmt;
 use core::mem;
 use plain::Plain;
 use sodiumoxide::crypto::sign::{self, PublicKey};
@@ -48,14 +49,16 @@ impl Header {
 
     /// Parse header from raw header data without verification
     pub unsafe fn new_unchecked<'a>(data: &'a [u8]) -> Result<&'a Header, Error> {
-        plain::from_bytes(data)
-            .map_err(Error::Plain)
+        Ok(plain::from_bytes(data)?)
+    }
+
+    pub fn count(&self) -> u64 {
+        self.count
     }
 
     /// Retrieve the size of the entries
     pub fn entries_size(&self) -> Result<u64, Error> {
-        let entry_size = u64::try_from(mem::size_of::<Entry>())
-            .map_err(Error::TryFromInt)?;
+        let entry_size = u64::try_from(mem::size_of::<Entry>())?;
         self.count
             .checked_mul(entry_size)
             .ok_or(Error::Overflow)
@@ -63,8 +66,7 @@ impl Header {
 
     /// Retrieve the size of the Header and its entries
     pub fn total_size(&self) -> Result<u64, Error> {
-        let header_size = u64::try_from(mem::size_of::<Header>())
-            .map_err(Error::TryFromInt)?;
+        let header_size = u64::try_from(mem::size_of::<Header>())?;
         self.entries_size()?
             .checked_add(header_size)
             .ok_or(Error::Overflow)
@@ -72,8 +74,7 @@ impl Header {
 
     /// Parse entries from raw entries data and verify using blake3
     pub fn entries<'a>(&self, data: &'a [u8]) -> Result<&'a [Entry], Error> {
-        let entries_size = usize::try_from(self.entries_size()?)
-            .map_err(Error::TryFromInt)?;
+        let entries_size = usize::try_from(self.entries_size()?)?;
 
         let entries_data = data.get(..entries_size)
             .ok_or(Error::Plain(plain::Error::TooShort))?;
@@ -94,8 +95,18 @@ impl Header {
 
     /// Parse entries from raw entries data without verification
     pub unsafe fn entries_unchecked<'a>(data: &'a [u8]) -> Result<&'a [Entry], Error> {
-        plain::slice_from_bytes(data)
-            .map_err(Error::Plain)
+        Ok(plain::slice_from_bytes(data)?)
+    }
+}
+
+impl fmt::Debug for Header {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Header {{\n\tsignature: {:?},\n\tpublic_key: {:?},\n\tblake3: {:?},count: {:?},\n}}",
+            &self.signature[..],
+            self.public_key,
+            self.blake3,
+            self.count(),
+        )
     }
 }
 
