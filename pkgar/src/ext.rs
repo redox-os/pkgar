@@ -80,7 +80,7 @@ where Src: PackageSrc<Err = Error>,
 /// outputs the blake3 hash of the data streamed, and also does not allocate.
 pub(crate) fn copy_and_hash<R: Read, W: Write>(
     mut read: R,
-    mut write: Option<W>,
+    mut write: W,
     buf: &mut [u8]
 ) -> Result<(u64, Hash), io::Error> {
     let mut hasher = Hasher::new();
@@ -93,12 +93,7 @@ pub(crate) fn copy_and_hash<R: Read, W: Write>(
         written += count as u64;
         hasher.update_with_join::<blake3::join::RayonJoin>(&buf[..count]);
         
-        //TODO: Progress
-        // After some naive testing it doesn't seem to make much difference to
-        // use dynamic dispatch instead of checking every iteration
-        if let Some(ref mut write) = write {
-            write.write_all(&buf[..count])?;
-        }
+        write.write_all(&buf[..count])?;
     }
     Ok((written, hasher.finalize()))
 }

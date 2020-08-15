@@ -150,7 +150,7 @@ pub fn create(
                         file: path.clone(),
                         source: e,
                     })?;
-                copy_and_hash(&mut entry_file, Some(&mut archive_file), &mut buf)
+                copy_and_hash(&mut entry_file, &mut archive_file, &mut buf)
                     .map_err(|source| Error::Io {
                         reason: format!("Writing entry to archive: '{}'", relative.display()),
                         file: path.clone(),
@@ -165,7 +165,7 @@ pub fn create(
                         source: e,
                     })?;
                 let mut data = destination.as_os_str().as_bytes();
-                copy_and_hash(&mut data, Some(&mut archive_file), &mut buf)
+                copy_and_hash(&mut data, &mut archive_file, &mut buf)
                     .map_err(|source| Error::Io {
                         reason: format!("Writing entry to archive: '{}'", relative.display()),
                         file: path.clone(),

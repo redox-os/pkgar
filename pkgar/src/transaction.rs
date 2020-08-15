@@ -101,7 +101,7 @@ impl Transaction {
                             file: PathBuf::from(&tmp_path),
                             source: e,
                         })?;
-                    copy_and_hash(src.entry_reader(entry), Some(&mut tmp_file), &mut buf)
+                    copy_and_hash(src.entry_reader(entry), &mut tmp_file, &mut buf)
                         .map_err(|source| Error::Io {
                             reason: format!("Copying entry to tempfile: '{}'", relative_path.display()),
                             file: tmp_path.to_path_buf(),
@@ -110,7 +110,7 @@ impl Transaction {
                 },
                 MODE_SYMLINK => {
                     let mut data = Vec::new();
-                    let (size, hash) = copy_and_hash(src.entry_reader(entry), Some(&mut data), &mut buf)
+                    let (size, hash) = copy_and_hash(src.entry_reader(entry), &mut data, &mut buf)
                         .map_err(|source| Error::Io {
                             reason: format!("Copying entry to tempfile: '{}'", relative_path.display()),
                             file: tmp_path.to_path_buf(),
@@ -193,7 +193,7 @@ impl Transaction {
                     file: PathBuf::from(&target_path),
                     source: e,
                 })?;
-            copy_and_hash::<_, io::Sink>(candidate, None, &mut buf)
+            copy_and_hash(candidate, io::sink(), &mut buf)
                 .map_err(|source| Error::Io {
                     reason: format!("Hashing file for entry: '{}'", relative_path.display()),
                     file: PathBuf::from(&target_path),
