@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use user_error::UFE;
 use thiserror::Error;
 
+/// An error which includes path context and implements `UFE` for easy display.
 #[derive(Debug, Error)]
 #[error("File: {path}")]
 pub struct Error {
@@ -14,6 +15,9 @@ pub struct Error {
 
 impl UFE for Error {}
 
+/// The main error type that is used by this library internally. For additional
+/// contextual information, most public routines use [`Error`](struct.Error.html).
+#[non_exhaustive]
 #[derive(Debug, Error)]
 pub enum ErrorKind {
     #[error("Io")]
@@ -24,9 +28,6 @@ pub enum ErrorKind {
     
     #[error("Public and secret keys do not match")]
     KeyMismatch,
-    
-    #[error("Unable to allocate locked/zeroed memory")]
-    SecureMem,
     
     #[error("Invalid nonce length")]
     NonceInvalid,
