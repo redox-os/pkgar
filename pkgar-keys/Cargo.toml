@@ -13,5 +13,7 @@ seckey = "0.9.3"
 serde = { version = "1.0.114", default_features = false, features = ["derive"] }
 sodiumoxide = { version = "0.2.5", default_features = false }
 termion = "1.5.5"
+thiserror = "1.0.20"
 toml = "0.5.6"
+user-error = "1.2.8"
 
