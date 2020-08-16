@@ -1,7 +1,12 @@
 [package]
 name = "pkgar-keys"
 version = "0.1.0"
+description = "Key management tool/library for pkgar"
+license = "MIT"
 authors = ["Wesley Hershberger <mggmugginsmc@gmail.com>"]
+repository = "https://gitlab.redox-os.org/redox-os/pkgar"
+keywords = ["cli", "redox", "linux", "cryptography", "tool", "pkgar"]
+readme = "README.md"
 edition = "2018"
 
 [dependencies]
