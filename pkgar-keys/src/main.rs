@@ -68,9 +68,9 @@ fn cli() -> Result<i32, Error> {
                 }
             }
             
-            let pkey_path = dbg!(submatches.value_of("pkey")
+            let pkey_path = submatches.value_of("pkey")
                 .map(|file| PathBuf::from(file) )
-                .unwrap_or(DEFAULT_PUBKEY.clone()));
+                .unwrap_or(DEFAULT_PUBKEY.clone());
             
             if ! submatches.is_present("plaintext") {
                 gen_keypair(&pkey_path, &skey_path)?;

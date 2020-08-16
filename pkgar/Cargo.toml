@@ -11,16 +11,16 @@ edition = "2018"
 plain = "0.2.3"
 pkgar-core = { path = "../pkgar-core" }
 pkgar-keys = { path = "../pkgar-keys" }
-sodiumoxide = { version = "0.2.5", default_features = false }
+sodiumoxide = { version = "0.2.6", default_features = false }
 thiserror = "1.0.20"
 user-error = "1.2.8"
 
 [dependencies.clap]
-version = "2.33.0"
+version = "2.33.3"
 optional = true
 
 [dependencies.blake3]
-version = "0.3.5"
+version = "0.3.6"
 default-features = false
 features = ["rayon"]
 
