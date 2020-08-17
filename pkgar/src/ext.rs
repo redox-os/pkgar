@@ -7,23 +7,24 @@ use std::path::{Component, Path};
 use blake3::{Hash, Hasher};
 use pkgar_core::{Entry, PackageSrc};
 
-use crate::Error;
+use crate::{Error, ErrorKind};
 
+/// Handy associated functions for `pkgar_core::Entry` that depend on std
 pub trait EntryExt {
-    fn check_path(&self) -> Result<&Path, Error>;
+    fn check_path(&self) -> Result<&Path, ErrorKind>;
 }
 
 impl EntryExt for Entry {
     /// Iterate the components of the path and ensure that there are no
     /// non-normal components.
-    fn check_path(&self) -> Result<&Path, Error> {
+    fn check_path(&self) -> Result<&Path, ErrorKind> {
         let path = Path::new(OsStr::from_bytes(self.path()));
         for component in path.components() {
             match component {
                 Component::Normal(_) => {},
                 invalid => {
                     let bad_component: &Path = invalid.as_ref();
-                    return Err(Error::InvalidPath {
+                    return Err(ErrorKind::InvalidPath {
                         entry: path.to_path_buf(),
                         component: bad_component.to_path_buf(),
                     });
@@ -35,16 +36,15 @@ impl EntryExt for Entry {
 }
 
 //TODO: Fix the types for this
-pub trait PackageSrcExt<Src>
-where Src: PackageSrc<Err = Error>,
+pub trait PackageSrcExt
+    where Self: PackageSrc<Err = Error> + Sized
 {
-    fn entry_reader(&mut self, entry: Entry) -> EntryReader<'_, Src>;
-}
-
-impl<Src> PackageSrcExt<Src> for Src
-where Src: PackageSrc<Err = Error>,
-{
-    fn entry_reader(&mut self, entry: Entry) -> EntryReader<'_, Src> {
+    /// Get the path corresponding to this `PackageSrc`. This will likely be
+    /// refactored to use something more generic than `Path` in future.
+    fn path(&self) -> &Path;
+    
+    /// Build a reader for a given entry on this source.
+    fn entry_reader(&mut self, entry: Entry) -> EntryReader<'_, Self> {
         EntryReader {
             src: self,
             entry,
@@ -57,7 +57,7 @@ where Src: PackageSrc<Err = Error>,
 /// Use `PackageSrcExt::entry_reader` for construction
 //TODO: Fix the types for this
 pub struct EntryReader<'a, Src>
-where Src: PackageSrc<Err = Error>,
+    where Src: PackageSrc<Err = Error>
 {
     src: &'a mut Src,
     entry: Entry,
@@ -65,10 +65,11 @@ where Src: PackageSrc<Err = Error>,
 }
 
 impl<Src> Read for EntryReader<'_, Src>
-where Src: PackageSrc<Err = Error>,
+    where Src: PackageSrc<Err = Error>
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let count = self.src.read_entry(self.entry, self.pos, buf)
+            // This is a little painful, since e is pkgar::Error...
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e) )?;
         self.pos += count;
         Ok(count)
