@@ -7,7 +7,7 @@ use std::path::{Component, Path};
 use blake3::{Hash, Hasher};
 use pkgar_core::{Entry, PackageSrc};
 
-use crate::{Error, ErrorKind};
+use crate::ErrorKind;
 
 /// Handy associated functions for `pkgar_core::Entry` that depend on std
 pub trait EntryExt {
@@ -35,9 +35,8 @@ impl EntryExt for Entry {
     }
 }
 
-//TODO: Fix the types for this
 pub trait PackageSrcExt
-    where Self: PackageSrc<Err = Error> + Sized
+    where Self: PackageSrc + Sized,
 {
     /// Get the path corresponding to this `PackageSrc`. This will likely be
     /// refactored to use something more generic than `Path` in future.
@@ -57,15 +56,17 @@ pub trait PackageSrcExt
 /// Use `PackageSrcExt::entry_reader` for construction
 //TODO: Fix the types for this
 pub struct EntryReader<'a, Src>
-    where Src: PackageSrc<Err = Error>
+    where Src: PackageSrc
 {
     src: &'a mut Src,
     entry: Entry,
     pos: usize,
 }
 
-impl<Src> Read for EntryReader<'_, Src>
-    where Src: PackageSrc<Err = Error>
+impl<Src, E> Read for EntryReader<'_, Src>
+    where
+        Src: PackageSrc<Err = E>,
+        E: From<pkgar_core::Error> + std::error::Error + Send + Sync + 'static,
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let count = self.src.read_entry(self.entry, self.pos, buf)

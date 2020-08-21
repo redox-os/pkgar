@@ -142,7 +142,7 @@ impl Transaction {
         Ok(())
     }
     
-    pub fn upgrade<Pkg, Pth>(&mut self, old: &mut Pkg, new: &mut Pkg, base_dir: Pth) -> Result<(), Error>
+    pub fn replace<Pkg, Pth>(&mut self, old: &mut Pkg, new: &mut Pkg, base_dir: Pth) -> Result<(), Error>
     where
         Pkg: PackageSrc<Err = Error> + PackageSrcExt,
         Pth: AsRef<Path>,

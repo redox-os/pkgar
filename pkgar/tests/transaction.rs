@@ -71,7 +71,7 @@ fn build_install_update_remove() -> Result<(), Box<dyn Error>> {
     
     println!("Upgrade archive");
     let mut update = Transaction::new();
-    update.upgrade(&mut src_pkg, &mut src2_pkg, tmp.dir("installroot"))?;
+    update.replace(&mut src_pkg, &mut src2_pkg, tmp.dir("installroot"))?;
     update.commit()?;
     
     println!("Uninstall archive");
