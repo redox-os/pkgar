@@ -1,4 +1,5 @@
 #![no_std]
+#![feature(min_const_generics)]
 extern crate alloc;
 
 use core::mem;
