@@ -1,8 +1,7 @@
 # `pkgar-keys`
-Key management for pkgar.
+Key management tool/library for pkgar.
 
-Run the binary with `--help` for CLI documentation. Secret keys are stored in
-`~/.pkgar/keys` by default.
-
-Keys are stored in toml format, the key format is subject to change.
+Run the binary with `--help` for CLI documentation. Keys are stored in
+`~/.pkgar/keys` by default and are stored as toml. The key format is subject
+to change.
 

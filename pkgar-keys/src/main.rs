@@ -1,14 +1,16 @@
-use std::io::{stdout, Write};
-use std::fs::{self, File};
+use std::io;
+use std::fs;
 use std::path::PathBuf;
 use std::process;
 
 use clap::clap_app;
+use user_error::UFE;
 
 use pkgar_keys::{
     DEFAULT_PUBKEY,
     DEFAULT_SECKEY,
     Error,
+    ErrorKind,
     gen_keypair,
     get_skey,
     SecretKeyFile,
@@ -31,10 +33,10 @@ fn cli() -> Result<i32, Error> {
                 "Don't check for existing files before generating a new keypair")
         )
         (@subcommand rencrypt =>
-            (about: "Re-encrypt the secret key provided by --keyfile")
+            (about: "Re-encrypt the secret key provided by --skey")
         )
         (@subcommand export =>
-            (about: "Print the public key given with --keyfile in the pkgar pubkey format")
+            (about: "Print the public key corresponding to the key given with --skey in the pkgar pubkey format")
             (@arg file: -f --file [FILE] "Output to a file instead of stdout")
         )
     ).get_matches();
@@ -51,14 +53,18 @@ fn cli() -> Result<i32, Error> {
         "gen" => {
             if let Some(keydir) = skey_path.parent() {
                 fs::create_dir_all(&keydir)
-                    .map_err(|err| {
-                        Error::Custom(format!("{}: {}", keydir.display(), err))
+                    .map_err(|err| Error {
+                        path: keydir.to_path_buf(),
+                        src: ErrorKind::Io(err),
                     })?;
             }
             
             if ! submatches.is_present("force") {
                 if skey_path.exists() {
-                    return Err(Error::Custom(format!("Error: {} exists", skey_path.display())));
+                    return Err(Error {
+                        path: skey_path,
+                        src: ErrorKind::Io(io::Error::from(io::ErrorKind::AlreadyExists)),
+                    });
                 }
             }
             
@@ -76,16 +82,17 @@ fn cli() -> Result<i32, Error> {
         },
         "export" => {
             let skey = get_skey(&skey_path)?;
-            
-            let pkey = toml::to_string(&skey.public_key_file()
-                .expect("Secret key is encrypted?"))?;
+            let pkey = skey.public_key_file()
+                .expect("Secret key was encrypted after being decrypted");
             
             if let Some(file) = submatches.value_of("file") {
-                File::create(&file)?
-                    .write_all(pkey.as_bytes())?;
+                pkey.save(file.as_ref())?;
             } else {
-                stdout().lock()
-                    .write_all(pkey.as_bytes())?;
+                pkey.write(io::stdout().lock())
+                    .map_err(|src| Error {
+                        path: PathBuf::from("stdout"),
+                        src,
+                    })?;
             }
         },
         "rencrypt" => {
@@ -100,7 +107,7 @@ fn cli() -> Result<i32, Error> {
 
 fn main() {
     let code = cli().unwrap_or_else(|err| {
-        eprintln!("{}", err);
+        eprintln!("{}", err.into_ufe());
         process::exit(1);
     });
     process::exit(code);

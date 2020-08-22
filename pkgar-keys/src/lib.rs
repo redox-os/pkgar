@@ -1,13 +1,14 @@
 mod error;
 
-use std::fs::File;
-use std::io::{self, Read, stdin, stdout, Write};
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, stdin, stdout, Write};
 use std::ops::Deref;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use hex::FromHex;
 use lazy_static::lazy_static;
-use seckey::SecKey;
+use seckey::SecBytes;
 use serde::{Deserialize, Serialize};
 use sodiumoxide::crypto::{
     pwhash,
@@ -16,18 +17,28 @@ use sodiumoxide::crypto::{
 };
 use termion::input::TermRead;
 
-pub use error::Error;
+pub use error::{ErrorKind, Error};
 
 lazy_static! {
     static ref HOMEDIR: PathBuf = {
          dirs::home_dir()
             .unwrap_or("./".into())
     };
+    
+    /// The default location for pkgar to look for the user's public key.
+    ///
+    /// Defaults to `$HOME/.pkgar/keys/id_ed25519.pub.toml`. If `$HOME` is
+    /// unset, `./.pkgar/keys/id_ed25519.pub.toml`.
     pub static ref DEFAULT_PUBKEY: PathBuf = {
-        Path::join(&HOMEDIR, ".pkgar/keys/id_ed25519.toml")
-    };
-    pub static ref DEFAULT_SECKEY: PathBuf = {
         Path::join(&HOMEDIR, ".pkgar/keys/id_ed25519.pub.toml")
+    };
+    
+    /// The default location for pkgar to look for the user's secret key.
+    ///
+    /// Defaults to `$HOME/.pkgar/keys/id_ed25519.toml`. If `$HOME` is unset,
+    /// `./.pkgar/keys/id_ed25519.toml`.
+    pub static ref DEFAULT_SECKEY: PathBuf = {
+        Path::join(&HOMEDIR, ".pkgar/keys/id_ed25519.toml")
     };
 }
 
@@ -70,20 +81,39 @@ pub struct PublicKeyFile {
 }
 
 impl PublicKeyFile {
-    /// Helper function to deserialize.
+    /// Parse a `PublicKeyFile` from `file` (in toml format).
     pub fn open(file: &Path) -> Result<PublicKeyFile, Error> {
-        let mut s = String::new();
-        File::open(file)?
-            .read_to_string(&mut s)?;
+        let content = fs::read_to_string(file)
+            .map_err(|src| Error {
+                path: file.to_path_buf(),
+                src: ErrorKind::from(src),
+            })?;
         
-        Ok(toml::from_str(&s)?)
+        toml::from_str(&content)
+           .map_err(|src| Error {
+               path: file.to_path_buf(),
+               src: ErrorKind::from(src),
+           })
     }
     
-    /// Helper function to serialize and save.
-    pub fn save(&self, file: &Path) -> Result<(), Error> {
-        File::create(file)?
-            .write_all(toml::to_string(self)?.as_bytes())?;
+    /// Write `self` serialized as toml to `w`.
+    pub fn write(&self, mut w: impl Write) -> Result<(), ErrorKind> {
+        w.write_all(toml::to_string(self)?.as_bytes())?;
         Ok(())
+    }
+    
+    /// Shortcut to write the public key to `file`
+    pub fn save(&self, file: &Path) -> Result<(), Error> {
+        self.write(
+            File::create(file)
+                .map_err(|src| Error {
+                    path: file.to_path_buf(),
+                    src: ErrorKind::from(src)
+                })?
+        ).map_err(|src| Error {
+            path: file.to_path_buf(),
+            src,
+        })
     }
 }
 
@@ -93,9 +123,9 @@ enum SKey {
 }
 
 impl SKey {
-    fn encrypt(&mut self, passwd: SecKey<str>, salt: pwhash::Salt, nonce: secretbox::Nonce) {
+    fn encrypt(&mut self, passwd: Passwd, salt: pwhash::Salt, nonce: secretbox::Nonce) {
         if let SKey::Plain(skey) = self {
-            if let Some(passwd_key) = gen_key(passwd, salt) {
+            if let Some(passwd_key) = passwd.gen_key(salt) {
                 let mut buf = [0; 80];
                 buf.copy_from_slice(&secretbox::seal(skey.as_ref(), &nonce, &passwd_key));
                 *self = SKey::Cipher(buf);
@@ -103,17 +133,17 @@ impl SKey {
         }
     }
     
-    fn decrypt(&mut self, passwd: SecKey<str>, salt: pwhash::Salt, nonce: secretbox::Nonce) -> Result<(), Error> {
+    fn decrypt(&mut self, passwd: Passwd, salt: pwhash::Salt, nonce: secretbox::Nonce) -> Result<(), ErrorKind> {
         if let SKey::Cipher(ciphertext) = self {
-            if let Some(passwd_key) = gen_key(passwd, salt) {
+            if let Some(passwd_key) = passwd.gen_key(salt) {
                 let skey_plain = secretbox::open(ciphertext.as_ref(), &nonce, &passwd_key)
-                    .map_err(|_| Error::PassphraseIncorrect )?;
+                    .map_err(|_| ErrorKind::PassphraseIncorrect )?;
                 
                 *self = SKey::Plain(sign::SecretKey::from_slice(&skey_plain)
-                    .ok_or(Error::KeyInvalid)?);
+                    .ok_or(ErrorKind::KeyInvalid)?);
             } else {
                 *self = SKey::Plain(sign::SecretKey::from_slice(&ciphertext[..64])
-                    .ok_or(Error::KeyInvalid)?);
+                    .ok_or(ErrorKind::KeyInvalid)?);
             }
         }
         Ok(())
@@ -146,7 +176,7 @@ impl FromHex for SKey {
         // Public key is only 64 bytes...
         if bytes.len() == 64 {
             Ok(SKey::Plain(sign::SecretKey::from_slice(&bytes)
-                                .expect("Somehow not the right number of bytes")))
+                .expect("Somehow not the right number of bytes")))
         } else {
             let mut buf = [0; 80];
             buf.copy_from_slice(&bytes);
@@ -169,8 +199,8 @@ pub struct SecretKeyFile {
 }
 
 impl SecretKeyFile {
-    /// Generate a keypair with all the nessesary info to save both
-    /// keys. You must call `save()` on each object to persist to disk.
+    /// Generate a keypair with all the nessesary info to save both keys. You
+    /// must call `save()` on each object to persist them to disk.
     pub fn new() -> (PublicKeyFile, SecretKeyFile) {
         let (pkey, skey) = sign::gen_keypair();
         
@@ -184,33 +214,57 @@ impl SecretKeyFile {
         (pkey_file, skey_file)
     }
     
-    /// Parse a SecretKeyFile from `file`.
+    /// Parse a `SecretKeyFile` from `file` (in toml format).
     pub fn open(file: &Path) -> Result<SecretKeyFile, Error> {
-        let mut s = String::new();
-        File::open(file)?
-            .read_to_string(&mut s)?;
+        let content = fs::read_to_string(file)
+            .map_err(|src| Error {
+                path: file.to_path_buf(),
+                src: ErrorKind::Io(src),
+            })?;
         
-        Ok(toml::from_str(&s)?)
+        toml::from_str(&content)
+            .map_err(|src| Error {
+                path:file.to_path_buf(),
+                src: ErrorKind::Deser(src),
+            })
     }
     
-    /// Save the secret key to `file`.
+    /// Write `self` serialized as toml to `w`.
+    pub fn write(&self, mut w: impl Write) -> Result<(), ErrorKind> {
+        w.write_all(toml::to_string(&self)?.as_bytes())?;
+        Ok(())
+    }
+    
+    /// Shortcut to write the secret key to `file`.
+    ///
     /// Make sure to call `encrypt()` in order to encrypt
     /// the private key, otherwise it will be stored as plain text.
     pub fn save(&self, file: &Path) -> Result<(), Error> {
-        File::create(file)?
-            .write_all(toml::to_string(&self)?.as_bytes())?;
-        Ok(())
+        self.write(
+            OpenOptions::new()
+                .write(true)
+                .create(true)
+                .mode(0o600)
+                .open(file)
+                .map_err(|src| Error {
+                    path: file.to_path_buf(),
+                    src: ErrorKind::from(src),
+                })?
+        ).map_err(|src| Error {
+            path: file.to_path_buf(),
+            src,
+        })
     }
     
     /// Ensure that the internal state of this struct is encrypted.
     /// Note that if passwd is empty, this function is a no-op.
-    pub fn encrypt(&mut self, passwd: SecKey<str>) {
+    pub fn encrypt(&mut self, passwd: Passwd) {
         self.skey.encrypt(passwd, self.salt, self.nonce)
     }
     
     /// Ensure that the internal state of this struct is decrypted.
     /// If the internal state is already decrypted, this function is a no-op.
-    pub fn decrypt(&mut self, passwd: SecKey<str>) -> Result<(), Error> {
+    pub fn decrypt(&mut self, passwd: Passwd) -> Result<(), ErrorKind> {
         self.skey.decrypt(passwd, self.salt, self.nonce)
     }
     
@@ -238,62 +292,101 @@ impl SecretKeyFile {
     }
 }
 
-/// Get a key for symmetric key encryption from a password.
-fn gen_key(passwd: SecKey<str>, salt: pwhash::Salt) -> Option<secretbox::Key> {
-    if passwd.read().deref() == "" {
-        None
-    } else {
-        let mut key = secretbox::Key([0; secretbox::KEYBYTES]);
-        let secretbox::Key(ref mut binary_key) = key;
+/// Secure in-memory representation of a password.
+pub struct Passwd {
+    bytes: SecBytes,
+}
+
+impl Passwd {
+    /// Create a new `Passwd` and zero the old string.
+    pub fn new(passwd: &mut String) -> Passwd {
+        let pwd = Passwd {
+            bytes :SecBytes::with(
+                passwd.len(),
+                |buf| buf.copy_from_slice(passwd.as_bytes())
+            ),
+        };
+        unsafe {
+            seckey::zero(passwd.as_bytes_mut());
+        }
+        pwd
+    }
+    
+    /// Prompt the user for a `Passwd` on stdin.
+    pub fn prompt(prompt: impl AsRef<str>) -> Result<Passwd, ErrorKind> {
+        let stdout = stdout();
+        let mut stdout = stdout.lock();
+        let stdin = stdin();
+        let mut stdin = stdin.lock();
         
-        pwhash::derive_key(binary_key, passwd.read().as_bytes(), &salt,
-                           pwhash::OPSLIMIT_INTERACTIVE,
-                           pwhash::MEMLIMIT_INTERACTIVE)
-            .expect("Failed to get key from password");
-        Some(key)
+        stdout.write_all(prompt.as_ref().as_bytes())?;
+        stdout.flush()?;
+        
+        let mut passwd = stdin.read_passwd(&mut stdout)?
+            .ok_or(ErrorKind::Io(
+                io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "Invalid Password Input",
+                )
+            ))?;
+        println!();
+        
+        Ok(Passwd::new(&mut passwd))
+    }
+    
+    /// Prompt for a password on stdin and confirm it. For configurable
+    /// prompts, use [`Passwd::prompt`](struct.Passwd.html#method.prompt).
+    pub fn prompt_new() -> Result<Passwd, ErrorKind> {
+        let passwd = Passwd::prompt(
+            "Please enter a new passphrase (leave empty to store the key in plaintext): "
+        )?;
+        let confirm = Passwd::prompt("Please re-enter the passphrase: ")?;
+    
+        if passwd != confirm {
+            Err(ErrorKind::PassphraseMismatch)
+        } else {
+            Ok(passwd)
+        }
+    }
+    
+    /// Get a key for symmetric key encryption from a password.
+    fn gen_key(&self, salt: pwhash::Salt) -> Option<secretbox::Key> {
+        if self.bytes.read().len() > 0 {
+            let mut key = secretbox::Key([0; secretbox::KEYBYTES]);
+            let secretbox::Key(ref mut binary_key) = key;
+            
+            pwhash::derive_key(
+                binary_key,
+                &self.bytes.read(),
+                &salt,
+                pwhash::OPSLIMIT_INTERACTIVE,
+                pwhash::MEMLIMIT_INTERACTIVE,
+            ).expect("Failed to get key from password");
+            Some(key)
+        } else {
+            None
+        }
     }
 }
 
-/// Prompt the user for a password on stdin.
-fn get_passwd(prompt: &str) -> Result<SecKey<str>, Error> {
-    let stdout = stdout();
-    let mut stdout = stdout.lock();
-    let stdin = stdin();
-    let mut stdin = stdin.lock();
-    
-    stdout.write_all(prompt.as_bytes())?;
-    stdout.flush()?;
-    
-    let mut passwd = stdin.read_passwd(&mut stdout)?
-        .ok_or(Error::Io(io::Error::new(io::ErrorKind::UnexpectedEof, "Invalid Password Input")))?;
-    
-    let passwd = SecKey::from_str(&mut passwd)
-        .ok_or(Error::MAlloc)?;
-    
-    println!();
-    
-    Ok(passwd)
-}
-
-/// Prompt for a password and confirm it.
-fn get_new_passwd() -> Result<SecKey<str>, Error> {
-    let passwd = get_passwd("Please enter a new passphrase (leave empty to store the key in plaintext): ")?;
-    let confirm = get_passwd("Please re-enter the passphrase: ")?;
-    
-    if passwd.read().deref() != confirm.read().deref() {
-        Err(Error::PassphraseMismatch)
-    } else {
-        Ok(passwd)
+impl PartialEq for Passwd {
+    fn eq(&self, other: &Passwd) -> bool {
+        self.bytes.read().deref() == other.bytes.read().deref()
     }
 }
+impl Eq for Passwd {}
 
 /// Generate a new keypair. The new keys will be saved to `file`. The user
 /// will be prompted on stdin for a password, empty passwords will cause the
 /// secret key to be stored in plain text. Note that parent
 /// directories will not be created.
 pub fn gen_keypair(pkey_path: &Path, skey_path: &Path) -> Result<(PublicKeyFile, SecretKeyFile), Error> {
-    let passwd = get_new_passwd()?;
-
+    let passwd = Passwd::prompt_new()
+        .map_err(|src| Error {
+            path: skey_path.to_path_buf(),
+            src,
+        })?;
+    
     let (pkey_file, mut skey_file) = SecretKeyFile::new();
     
     skey_file.encrypt(passwd);
@@ -305,29 +398,39 @@ pub fn gen_keypair(pkey_path: &Path, skey_path: &Path) -> Result<(PublicKeyFile,
     Ok((pkey_file, skey_file))
 }
 
-/// Get a SecretKeyFile from a path. If the file is encrypted, prompt for a password on stdin.
-pub fn get_skey(skey_path: &Path) -> Result<SecretKeyFile, Error> {
+fn prompt_skey(skey_path: &Path, prompt: impl AsRef<str>) -> Result<SecretKeyFile, Error> {
+    let to_file_err = |src| Error {
+        path: skey_path.to_path_buf(),
+        src,
+    };
+    
     let mut key_file = SecretKeyFile::open(skey_path)?;
     
     if key_file.is_encrypted() {
-        let passwd = get_passwd(&format!("Passphrase for {}: ", skey_path.display()))?;
-        key_file.decrypt(passwd)?;
+        let passwd = Passwd::prompt(&format!("{} {}: ", prompt.as_ref(), skey_path.display()))
+            .map_err(to_file_err)?;
+        key_file.decrypt(passwd)
+            .map_err(to_file_err)?;
     }
-    
     Ok(key_file)
+}
+
+
+/// Get a SecretKeyFile from a path. If the file is encrypted, prompt for a password on stdin.
+pub fn get_skey(skey_path: &Path) -> Result<SecretKeyFile, Error> {
+    prompt_skey(skey_path, "Passphrase for")
 }
 
 /// Open, decrypt, re-encrypt with a different passphrase from stdin, and save the newly encrypted
 /// secret key at `skey_path`.
 pub fn re_encrypt(skey_path: &Path) -> Result<(), Error> {
-    let mut skey_file = SecretKeyFile::open(skey_path)?;
+    let mut skey_file = prompt_skey(skey_path, "Old passphrase for")?;
     
-    if skey_file.is_encrypted() {
-        let passwd = get_passwd(&format!("Old passphrase for {}: ", skey_path.display()))?;
-        skey_file.decrypt(passwd)?;
-    }
-    
-    let passwd = get_new_passwd()?;
+    let passwd = Passwd::prompt_new()
+        .map_err(|src| Error {
+            path: skey_path.to_path_buf(),
+            src,
+        })?;
     skey_file.encrypt(passwd);
     
     skey_file.save(skey_path)
