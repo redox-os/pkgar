@@ -55,42 +55,42 @@ impl Action {
 
 pub struct Transaction {
     actions: Vec<Action>,
+    basedir: PathBuf,
 }
 
 impl Transaction {
-    pub fn new() -> Transaction {
+    pub fn new(basedir: impl AsRef<Path>) -> Transaction {
         Transaction {
             actions: Vec::new(),
+            basedir: basedir.as_ref().to_path_buf(),
         }
     }
     
-    pub fn install<Pkg, Pth>(&mut self, src: &mut Pkg, basedir: Pth) -> Result<(), Error>
-    where
-        Pkg: PackageSrc<Err = Error> + PackageSrcExt,
-        Pth: AsRef<Path>,
+    pub fn install<Pkg>(&mut self, src: &mut Pkg) -> Result<(), Error>
+        where Pkg: PackageSrc<Err = Error> + PackageSrcExt,
     {
         let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
         
-        for entry in src.read_entries()? {
+        let entries = src.read_entries()?;
+        self.actions.reserve(entries.len());
+        
+        for entry in entries {
             let relative_path = entry.check_path()?;
             
-            let target_path = basedir.as_ref().join(relative_path);
+            let target_path = self.basedir.join(relative_path);
             //HELP: Under what circumstances could this ever fail?
-            assert!(target_path.starts_with(&basedir), "target path was not in the base path");
+            assert!(target_path.starts_with(&self.basedir), "target path was not in the base path");
             
-            let entry_hash = Hash::from(entry.blake3());
-            let tmp_path = temp_path(&target_path, entry_hash)?;
+            let tmp_path = temp_path(&target_path, entry.blake3())?;
             
-            let mode_kind = entry.mode() & MODE_KIND;
-            let mode_perm = entry.mode() & MODE_PERM;
-            let (entry_data_size, entry_data_hash) = match mode_kind {
+            let (entry_data_size, entry_data_hash) = match entry.mode() & MODE_KIND {
                 MODE_FILE => {
                     //TODO: decide what to do when temp files are left over
                     let mut tmp_file = fs::OpenOptions::new()
                         .write(true)
                         .create(true)
                         .truncate(true)
-                        .mode(mode_perm)
+                        .mode(entry.mode & MODE_PERM)
                         .open(&tmp_path)
                         .map_err(|e| Error::from(e).path(&tmp_path) )?;
                     
@@ -125,27 +125,18 @@ impl Transaction {
                 }
             };
             
-            if entry_data_size != entry.size() {
-                Err(Error::from(
-                    ErrorKind::LengthMismatch {
-                        entry: PathBuf::from(relative_path),
-                        actual: entry_data_size,
-                        expected: entry.size(),
-                    })
-                    .path(src.path()))?
-            } else if entry_data_hash != entry_hash {
-                Err(pkgar_core::Error::InvalidBlake3)?
-            };
+            entry.verify(entry_data_hash, entry_data_size)
+                .map_err(|e| Error::from(e)
+                    .path(src.path())
+                )?;
             
             self.actions.push(Action::Rename(tmp_path, target_path))
         }
         Ok(())
     }
     
-    pub fn replace<Pkg, Pth>(&mut self, old: &mut Pkg, new: &mut Pkg, base_dir: Pth) -> Result<(), Error>
-    where
-        Pkg: PackageSrc<Err = Error> + PackageSrcExt,
-        Pth: AsRef<Path>,
+    pub fn replace<Pkg>(&mut self, old: &mut Pkg, new: &mut Pkg) -> Result<(), Error>
+        where Pkg: PackageSrc<Err = Error> + PackageSrcExt,
     {
         let old_entries = old.read_entries()?;
         let new_entries = new.read_entries()?;
@@ -156,7 +147,7 @@ impl Transaction {
                 .find(|new_e| new_e.blake3() == old_e.blake3() )
                 .is_none())
             .map(|e| {
-                let target_path = base_dir.as_ref()
+                let target_path = self.basedir
                     .join(e.check_path()?);
                 Ok(Action::Remove(target_path))
             })
@@ -164,22 +155,23 @@ impl Transaction {
         self.actions.append(&mut removes);
         
         //TODO: Don't force a re-read of all the entries for the new package
-        self.install(new, base_dir)
+        self.install(new)
     }
     
-    pub fn remove<Pkg, Pth>(&mut self, pkg: &mut Pkg, base_dir: Pth) -> Result<(), Error>
-    where
-        Pkg: PackageSrc<Err = Error>,
-        Pth: AsRef<Path>,
+    pub fn remove<Pkg>(&mut self, pkg: &mut Pkg) -> Result<(), Error>
+        where Pkg: PackageSrc<Err = Error>,
     {
         let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
-
-        for entry in pkg.read_entries()? {
+        
+        let entries = pkg.read_entries()?;
+        self.actions.reserve(entries.len());
+        
+        for entry in entries {
             let relative_path = entry.check_path()?;
             
-            let target_path = base_dir.as_ref().join(relative_path);
+            let target_path = self.basedir.join(relative_path);
             // Under what circumstances could this ever fail?
-            assert!(target_path.starts_with(&base_dir), "target path was not in the base path");
+            assert!(target_path.starts_with(&self.basedir), "target path was not in the base path");
             
             let candidate = File::open(&target_path)
                 .map_err(|e| Error::from(e).path(&target_path) )?;

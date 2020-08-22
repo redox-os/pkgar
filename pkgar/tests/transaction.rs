@@ -54,8 +54,8 @@ fn build_install_update_remove() -> Result<(), Box<dyn Error>> {
     let mut src_pkg = PackageFile::new(tmp.file("pkgar-src-1.pkgar"), &pkey_file.pkey)?;
     
     println!("Install archive");
-    let mut install = Transaction::new();
-    install.install(&mut src_pkg, tmp.dir("installroot"))?;
+    let mut install = Transaction::new(tmp.dir("installroot"));
+    install.install(&mut src_pkg)?;
     install.commit()?;
     
     println!("Modify build");
@@ -70,13 +70,13 @@ fn build_install_update_remove() -> Result<(), Box<dyn Error>> {
     let mut src2_pkg = PackageFile::new(tmp.file("pkgar-src-2.pkgar"), &pkey_file.pkey)?;
     
     println!("Upgrade archive");
-    let mut update = Transaction::new();
-    update.replace(&mut src_pkg, &mut src2_pkg, tmp.dir("installroot"))?;
+    let mut update = Transaction::new(tmp.dir("installroot"));
+    update.replace(&mut src_pkg, &mut src2_pkg)?;
     update.commit()?;
     
     println!("Uninstall archive");
-    let mut remove = Transaction::new();
-    remove.remove(&mut src2_pkg, tmp.dir("installroot"))?;
+    let mut remove = Transaction::new(tmp.dir("installroot"));
+    remove.remove(&mut src2_pkg)?;
     remove.commit()?;
     
     assert_eq!(fs::read_dir(tmp.dir("installroot"))?.count(), 0);

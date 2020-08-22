@@ -63,6 +63,8 @@ impl Repr {
     }
 }
 
+/// Primary error type for pkgar. Provides optional path and reason context
+/// for the underlying [`ErrorKind`](enum.ErrorKind.html).
 #[derive(Debug, Error)]
 #[error(transparent)]
 pub struct Error {
@@ -71,12 +73,22 @@ pub struct Error {
 }
 
 impl Error {
+    /// Set the path associated with this error. Calling `path()` multiple
+    /// times will only store the most recently added path.
+    ///
+    /// Most pkgar APIs will have already called `path()`; therefore, it's
+    /// unlikely that consumers of the library will need to use this function.
     pub fn path(mut self, path: impl AsRef<Path>) -> Error {
         let path = Some(path.as_ref().to_path_buf());
         self.repr = self.repr.as_complex(path, None);
         self
     }
     
+    /// Set the reason associated with this error. Calling `reason()` multiple
+    /// times will only store the most recently added reason.
+    ///
+    /// Most pkgar APIs will have already called `reason()`; therefore, it's
+    /// unlikely that consumers of the library will need to use this function.
     pub fn reason(mut self, reason: impl ToString) -> Error {
         let reason = Some(reason.to_string());
         self.repr = self.repr.as_complex(None, reason);
@@ -100,7 +112,10 @@ impl From<pkgar_keys::Error> for Error {
 
 impl UFE for Error {}
 
+/// Primary enumeration of error types producible by the pkgar crate. Most
+/// interaction with this type will be via [`Error`](struct.Error.html).
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ErrorKind {
     #[error("Io")]
     Io(#[from] io::Error),

@@ -217,8 +217,8 @@ pub fn extract(
 
     let mut package = PackageFile::new(archive_path, &pkey)?;
 
-    let mut transaction = Transaction::new();
-    transaction.install(&mut package, base_dir)?;
+    let mut transaction = Transaction::new(base_dir);
+    transaction.install(&mut package)?;
     transaction.commit()?;
 
     Ok(())
@@ -233,8 +233,8 @@ pub fn remove(
 
     let mut package = PackageFile::new(archive_path, &pkey)?;
 
-    let mut transaction = Transaction::new();
-    transaction.remove(&mut package, base_dir)?;
+    let mut transaction = Transaction::new(base_dir);
+    transaction.remove(&mut package)?;
     transaction.commit()?;
 
     Ok(())
