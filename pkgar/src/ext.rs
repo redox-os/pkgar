@@ -7,46 +7,46 @@ use std::path::{Component, Path};
 use blake3::{Hash, Hasher};
 use pkgar_core::{Entry, PackageSrc};
 
-use crate::ErrorKind;
+use crate::{Error, ErrorKind};
 
 /// Handy associated functions for `pkgar_core::Entry` that depend on std
 pub trait EntryExt {
-    fn check_path(&self) -> Result<&Path, ErrorKind>;
+    fn check_path(&self) -> Result<&Path, Error>;
     
-    fn verify(&self, blake3: Hash, size: u64) -> Result<(), ErrorKind>;
+    fn verify(&self, blake3: Hash, size: u64) -> Result<(), Error>;
 }
 
 impl EntryExt for Entry {
     /// Iterate the components of the path and ensure that there are no
     /// non-normal components.
-    fn check_path(&self) -> Result<&Path, ErrorKind> {
+    fn check_path(&self) -> Result<&Path, Error> {
         let path = Path::new(OsStr::from_bytes(self.path_bytes()));
         for component in path.components() {
             match component {
                 Component::Normal(_) => {},
                 invalid => {
                     let bad_component: &Path = invalid.as_ref();
-                    return Err(ErrorKind::InvalidPath {
-                        entry: path.to_path_buf(),
-                        component: bad_component.to_path_buf(),
-                    });
+                    return Err(ErrorKind::InvalidPathComponent(bad_component.to_path_buf())
+                        .as_error()
+                        .entry(*self)
+                    );
                 },
             }
         }
         Ok(&path)
     }
     
-    fn verify(&self, blake3: Hash, size: u64) -> Result<(), ErrorKind> {
-        let path = self.check_path()?;
-        
+    fn verify(&self, blake3: Hash, size: u64) -> Result<(), Error> {
         if size != self.size() {
             Err(ErrorKind::LengthMismatch {
-                entry: path.to_path_buf(),
-                actual: size,
-                expected: self.size(),
-            })
+                    actual: size,
+                    expected: self.size(),
+                }
+                .as_error()
+                .entry(*self)
+            )
         } else if blake3 != self.blake3() {
-            Err(ErrorKind::Core(pkgar_core::Error::InvalidBlake3))
+            Err(pkgar_core::Error::InvalidBlake3.into())
         } else {
             Ok(())
         }

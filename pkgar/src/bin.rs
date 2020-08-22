@@ -4,11 +4,11 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-use pkgar_core::{Entry, Header, PackageSrc};
+use pkgar_core::{Entry, Header, Mode, PackageSrc};
 use pkgar_keys::PublicKeyFile;
 use sodiumoxide::crypto::sign;
 
-use crate::{Error, ErrorKind, MODE_PERM, MODE_KIND, MODE_FILE, MODE_SYMLINK};
+use crate::{Error, ErrorKind};
 use crate::ext::{copy_and_hash, EntryExt};
 use crate::package::PackageFile;
 use crate::transaction::Transaction;
@@ -50,11 +50,15 @@ fn folder_entries<P, Q>(base: P, path: Q, entries: &mut Vec<Entry>) -> io::Resul
             path_bytes[..relative_bytes.len()].copy_from_slice(relative_bytes);
 
             let file_type = metadata.file_type();
-            let mut mode = metadata.permissions().mode() & MODE_PERM;
+            let file_mode = metadata.permissions().mode();
+
+            //TODO: Use pkgar_core::Mode for all ops. This is waiting on error
+            // handling.
+            let mut mode = file_mode & Mode::PERM.bits();
             if file_type.is_file() {
-                mode |= MODE_FILE;
+                mode |= Mode::FILE.bits();
             } else if file_type.is_symlink() {
-                mode |= MODE_SYMLINK;
+                mode |= Mode::SYMLINK.bits();
             } else {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -134,20 +138,25 @@ pub fn create(
         let relative = entry.check_path()?;
         let path = folder.as_ref().join(relative);
 
-        let mode_kind = entry.mode & MODE_KIND;
-        let (total, hash) = match mode_kind {
-            MODE_FILE => {
+        let mode = entry.mode()
+            .map_err(|e| Error::from(e)
+                .entry(*entry)
+            )?;
+
+        let (total, hash) = match mode.kind() {
+            Mode::FILE => {
                 let mut entry_file = fs::OpenOptions::new()
                     .read(true)
                     .open(&path)
                     .map_err(|e| Error::from(e).path(&path) )?;
+                
                 copy_and_hash(&mut entry_file, &mut archive_file, &mut buf)
                     .map_err(|e| Error::from(e)
                         .reason(format!("Writing entry to archive: '{}'", relative.display()))
                         .path(&path)
                     )?
             },
-            MODE_SYMLINK => {
+            Mode::SYMLINK => {
                 let destination = fs::read_link(&path)
                     .map_err(|e| Error::from(e).path(&path) )?;
 
@@ -158,19 +167,19 @@ pub fn create(
                         .path(&path)
                     )?
             },
-            _ => {
-                return Err(ErrorKind::UnsupportedMode {
-                    entry: relative.to_path_buf(),
-                    mode: entry.mode(),
-                }.into());
-            }
+            _ => return Err(Error::from(
+                    pkgar_core::Error::InvalidMode(mode.bits())
+                )
+                .entry(*entry)),
         };
         if total != entry.size() {
             return Err(ErrorKind::LengthMismatch {
-                entry: relative.to_path_buf(),
-                actual: total,
-                expected: entry.size(),
-            }.into());
+                    actual: total,
+                    expected: entry.size(),
+                }
+                .as_error()
+                .entry(*entry)
+            );
         }
         entry.blake3.copy_from_slice(hash.as_bytes());
 

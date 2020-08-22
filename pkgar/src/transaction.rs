@@ -6,9 +6,9 @@ use std::os::unix::fs::{symlink, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 use blake3::Hash;
-use pkgar_core::PackageSrc;
+use pkgar_core::{Mode, PackageSrc};
 
-use crate::{Error, ErrorKind, MODE_FILE, MODE_KIND, MODE_PERM, MODE_SYMLINK};
+use crate::{Error, ErrorKind};
 use crate::ext::{copy_and_hash, EntryExt, PackageSrcExt};
 
 const READ_WRITE_HASH_BUF_SIZE: usize = 4 * 1024 * 1024;
@@ -22,10 +22,7 @@ fn temp_path(target_path: impl AsRef<Path>, entry_hash: Hash) -> Result<PathBuf,
     };
     
     let parent = target_path.as_ref().parent()
-        .ok_or(ErrorKind::InvalidPath {
-            entry: PathBuf::from(target_path.as_ref()),
-            component: PathBuf::from("/"),
-        })?;
+        .ok_or(ErrorKind::InvalidPathComponent(PathBuf::from("/")))?;
     fs::create_dir_all(&parent)
         .map_err(|e| Error::from(e).path(parent) )?;
     Ok(parent.join(tmp_name))
@@ -75,7 +72,8 @@ impl Transaction {
         self.actions.reserve(entries.len());
         
         for entry in entries {
-            let relative_path = entry.check_path()?;
+            let relative_path = entry.check_path()
+                .map_err(|e| e.path(src.path()) )?;
             
             let target_path = self.basedir.join(relative_path);
             //HELP: Under what circumstances could this ever fail?
@@ -83,14 +81,20 @@ impl Transaction {
             
             let tmp_path = temp_path(&target_path, entry.blake3())?;
             
-            let (entry_data_size, entry_data_hash) = match entry.mode() & MODE_KIND {
-                MODE_FILE => {
+            let mode = entry.mode()
+                .map_err(|e| Error::from(e)
+                    .path(src.path())
+                    .entry(entry)
+                )?;
+            
+            let (entry_data_size, entry_data_hash) = match mode.kind() {
+                Mode::FILE => {
                     //TODO: decide what to do when temp files are left over
                     let mut tmp_file = fs::OpenOptions::new()
                         .write(true)
                         .create(true)
                         .truncate(true)
-                        .mode(entry.mode & MODE_PERM)
+                        .mode(mode.perm().bits())
                         .open(&tmp_path)
                         .map_err(|e| Error::from(e).path(&tmp_path) )?;
                     
@@ -100,7 +104,7 @@ impl Transaction {
                             .path(&tmp_path)
                         )?
                 },
-                MODE_SYMLINK => {
+                Mode::SYMLINK => {
                     let mut data = Vec::new();
                     let (size, hash) = copy_and_hash(src.entry_reader(entry), &mut data, &mut buf)
                         .map_err(|e| Error::from(e)
@@ -117,18 +121,15 @@ impl Transaction {
                 },
                 _ => {
                     return Err(Error::from(
-                        ErrorKind::UnsupportedMode {
-                            entry: PathBuf::from(relative_path),
-                            mode: entry.mode(),
-                        })
+                            pkgar_core::Error::InvalidMode(mode.bits())
+                        )
+                        .entry(entry)
                         .path(src.path()));
                 }
             };
             
             entry.verify(entry_data_hash, entry_data_size)
-                .map_err(|e| Error::from(e)
-                    .path(src.path())
-                )?;
+                .map_err(|e| e.path(src.path()))?;
             
             self.actions.push(Action::Rename(tmp_path, target_path))
         }

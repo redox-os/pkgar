@@ -2,6 +2,8 @@
 use blake3::Hash;
 use plain::Plain;
 
+use crate::{Error, Mode};
+
 #[derive(Clone, Copy, Debug)]
 #[repr(packed)]
 pub struct Entry {
@@ -30,8 +32,9 @@ impl Entry {
         self.size
     }
     
-    pub fn mode(&self) -> u32 {
-        self.mode
+    pub fn mode(&self) -> Result<Mode, Error> {
+        Mode::from_bits(self.mode)
+            .ok_or(Error::InvalidMode(self.mode))
     }
     
     /// Retrieve the path, ending at the first NUL

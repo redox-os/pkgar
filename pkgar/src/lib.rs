@@ -10,14 +10,9 @@ pub use transaction::*;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use pkgar_core::{Entry, Mode};
 use thiserror::Error;
 use user_error::UFE;
-
-// This ensures that all platforms use the same mode defines
-pub(crate) const MODE_PERM: u32 = 0o007777;
-pub(crate) const MODE_KIND: u32 = 0o170000;
-pub(crate) const MODE_FILE: u32 = 0o100000;
-pub(crate) const MODE_SYMLINK: u32 = 0o120000;
 
 /// This mimics the way std::io::Error works, to manage adding context in an
 /// adequate manner, without too much boilderplate.
@@ -41,21 +36,29 @@ enum Repr {
     Complex {
         path: Option<PathBuf>,
         reason: Option<String>,
+        entry: Option<Entry>,
         src: ErrorKind,
     }
 }
 
 impl Repr {
-    fn as_complex(self, new_path: Option<PathBuf>, new_reason: Option<String>) -> Repr {
+    fn as_complex(
+        self,
+        new_path: Option<PathBuf>,
+        new_reason: Option<String>,
+        new_entry: Option<Entry>,
+    ) -> Repr {
         match self {
             Repr::Kind(src) => Repr::Complex {
                 path: new_path,
                 reason: new_reason,
+                entry: new_entry,
                 src,
             },
-            Repr::Complex { path, reason, src } => Repr::Complex {
+            Repr::Complex { path, reason, entry, src } => Repr::Complex {
                 path: new_path.or(path),
                 reason: new_reason.or(reason),
+                entry: new_entry.or(entry),
                 src,
             },
             _ => self,
@@ -80,7 +83,7 @@ impl Error {
     /// unlikely that consumers of the library will need to use this function.
     pub fn path(mut self, path: impl AsRef<Path>) -> Error {
         let path = Some(path.as_ref().to_path_buf());
-        self.repr = self.repr.as_complex(path, None);
+        self.repr = self.repr.as_complex(path, None, None);
         self
     }
     
@@ -91,7 +94,12 @@ impl Error {
     /// unlikely that consumers of the library will need to use this function.
     pub fn reason(mut self, reason: impl ToString) -> Error {
         let reason = Some(reason.to_string());
-        self.repr = self.repr.as_complex(None, reason);
+        self.repr = self.repr.as_complex(None, reason, None);
+        self
+    }
+    
+    pub fn entry(mut self, entry: Entry) -> Error {
+        self.repr = self.repr.as_complex(None, None, Some(entry));
         self
     }
 }
@@ -131,24 +139,23 @@ pub enum ErrorKind {
     #[error("Package: {0}")]
     Core(pkgar_core::Error),
     
-    #[error("Invalid component in entry path '{entry}': {component}")]
-    InvalidPath {
-        entry: PathBuf,
-        component: PathBuf,
-    },
+    #[error("Invalid path component: {0}")]
+    InvalidPathComponent(PathBuf),
     
-    #[error("Entry size mismatch for '{entry}', expected {expected}, got {actual}")]
+    #[error("Entry size mismatch: expected {expected}, got {actual}")]
     LengthMismatch {
-        entry: PathBuf,
         actual: u64,
         expected: u64,
     },
     
-    #[error("Unsupported mode for entry {entry}: {mode:#o}")]
-    UnsupportedMode {
-        entry: PathBuf,
-        mode: u32,
-    },
+    #[error("Invalid Mode Kind: {0:#o}")]
+    InvalidModeKind(Mode),
+}
+
+impl ErrorKind {
+    pub fn as_error(self) -> Error {
+        Error::from(self)
+    }
 }
 
 impl From<pkgar_core::Error> for ErrorKind {
