@@ -1,14 +1,13 @@
 //! The packed structs represent the on-disk format of pkgar
 
 use core::convert::TryFrom;
-use core::fmt;
 use core::mem;
 use plain::Plain;
 use sodiumoxide::crypto::sign::{self, PublicKey};
 
 use crate::{Entry, Error};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[repr(packed)]
 pub struct Header {
     /// NaCl signature of header data
@@ -98,7 +97,7 @@ impl Header {
         Ok(plain::slice_from_bytes(data)?)
     }
 }
-
+/*
 impl fmt::Debug for Header {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Header {{\n\tsignature: {:?},\n\tpublic_key: {:?},\n\tblake3: {:?},count: {:?},\n}}",
@@ -108,5 +107,5 @@ impl fmt::Debug for Header {
             self.count(),
         )
     }
-}
+}*/
 
