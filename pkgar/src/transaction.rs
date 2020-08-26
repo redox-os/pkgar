@@ -52,32 +52,28 @@ impl Action {
 
 pub struct Transaction {
     actions: Vec<Action>,
-    basedir: PathBuf,
 }
 
 impl Transaction {
-    pub fn new(basedir: impl AsRef<Path>) -> Transaction {
-        Transaction {
-            actions: Vec::new(),
-            basedir: basedir.as_ref().to_path_buf(),
-        }
-    }
-    
-    pub fn install<Pkg>(&mut self, src: &mut Pkg) -> Result<(), Error>
+    pub fn install<Pkg>(
+        src: &mut Pkg,
+        base_dir: impl AsRef<Path>
+    ) -> Result<Transaction, Error>
         where Pkg: PackageSrc<Err = Error> + PackageSrcExt,
     {
         let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
         
         let entries = src.read_entries()?;
-        self.actions.reserve(entries.len());
+        let mut actions = Vec::with_capacity(entries.len());
         
         for entry in entries {
             let relative_path = entry.check_path()
                 .map_err(|e| e.path(src.path()) )?;
             
-            let target_path = self.basedir.join(relative_path);
+            let target_path = base_dir.as_ref().join(relative_path);
             //HELP: Under what circumstances could this ever fail?
-            assert!(target_path.starts_with(&self.basedir), "target path was not in the base path");
+            assert!(target_path.starts_with(&base_dir),
+                "target path was not in the base path");
             
             let tmp_path = temp_path(&target_path, entry.blake3())?;
             
@@ -131,61 +127,76 @@ impl Transaction {
             entry.verify(entry_data_hash, entry_data_size)
                 .map_err(|e| e.path(src.path()))?;
             
-            self.actions.push(Action::Rename(tmp_path, target_path))
+            actions.push(Action::Rename(tmp_path, target_path))
         }
-        Ok(())
+        Ok(Transaction {
+            actions,
+        })
     }
     
-    pub fn replace<Pkg>(&mut self, old: &mut Pkg, new: &mut Pkg) -> Result<(), Error>
+    pub fn replace<Pkg>(
+        old: &mut Pkg,
+        new: &mut Pkg,
+        base_dir: impl AsRef<Path>,
+    ) -> Result<Transaction, Error>
         where Pkg: PackageSrc<Err = Error> + PackageSrcExt,
     {
         let old_entries = old.read_entries()?;
         let new_entries = new.read_entries()?;
         
         // All the files that are present in old but not in new
-        let mut removes = old_entries.iter()
+        let mut actions = old_entries.iter()
             .filter(|old_e| new_entries.iter()
                 .find(|new_e| new_e.blake3() == old_e.blake3() )
                 .is_none())
             .map(|e| {
-                let target_path = self.basedir
+                let target_path = base_dir.as_ref()
                     .join(e.check_path()?);
                 Ok(Action::Remove(target_path))
             })
             .collect::<Result<Vec<Action>, Error>>()?;
-        self.actions.append(&mut removes);
         
         //TODO: Don't force a re-read of all the entries for the new package
-        self.install(new)
+        let mut trans = Transaction::install(new, base_dir)?;
+        trans.actions.append(&mut actions);
+        Ok(trans)
     }
     
-    pub fn remove<Pkg>(&mut self, pkg: &mut Pkg) -> Result<(), Error>
+    pub fn remove<Pkg>(
+        pkg: &mut Pkg,
+        base_dir: impl AsRef<Path>
+    ) -> Result<Transaction, Error>
         where Pkg: PackageSrc<Err = Error>,
     {
         let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
         
         let entries = pkg.read_entries()?;
-        self.actions.reserve(entries.len());
+        let mut actions = Vec::with_capacity(entries.len());
         
         for entry in entries {
             let relative_path = entry.check_path()?;
             
-            let target_path = self.basedir.join(relative_path);
+            let target_path = base_dir.as_ref()
+                .join(relative_path);
             // Under what circumstances could this ever fail?
-            assert!(target_path.starts_with(&self.basedir), "target path was not in the base path");
+            assert!(target_path.starts_with(&base_dir),
+                "target path was not in the base path");
             
             let candidate = File::open(&target_path)
                 .map_err(|e| Error::from(e).path(&target_path) )?;
             
+            // Ensure that the deletion candidate on disk has not been modified
             copy_and_hash(candidate, io::sink(), &mut buf)
                 .map_err(|e| Error::from(e)
                     .reason(format!("Hashing file for entry: '{}'", relative_path.display()))
                     .path(&target_path)
                 )?;
             
-            self.actions.push(Action::Remove(target_path));
+            actions.push(Action::Remove(target_path));
         }
-        Ok(())
+        Ok(Transaction {
+            actions
+        })
     }
     
     pub fn commit(&mut self) -> Result<usize, Error> {
