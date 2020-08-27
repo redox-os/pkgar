@@ -1,4 +1,4 @@
-use std::fs;
+use std::fs::{self, File};
 use std::io::{self, Seek, SeekFrom, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
@@ -8,7 +8,7 @@ use pkgar_core::{Entry, Header, Mode, PackageSrc};
 use pkgar_keys::PublicKeyFile;
 use sodiumoxide::crypto::sign;
 
-use crate::{Error, ErrorKind};
+use crate::{Error, ErrorKind, READ_WRITE_HASH_BUF_SIZE};
 use crate::ext::{copy_and_hash, EntryExt};
 use crate::package::PackageFile;
 use crate::transaction::Transaction;
@@ -259,6 +259,30 @@ pub fn list(
         println!("{}", relative.display());
     }
 
+    Ok(())
+}
+
+pub fn verify(
+    pkey_path: impl AsRef<Path>,
+    archive_path: impl AsRef<Path>,
+    base_dir: impl AsRef<Path>,
+) -> Result<(), Error> {
+    let pkey = PublicKeyFile::open(pkey_path)?.pkey;
+
+    let mut package = PackageFile::new(archive_path, &pkey)?;
+
+    let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
+    for entry in package.read_entries()? {
+        let expected_path = base_dir.as_ref()
+            .join(entry.check_path()?);
+
+        let expected = File::open(&expected_path)
+            .map_err(|e| Error::from(e).path(expected_path) )?;
+
+        let (count, hash) = copy_and_hash(expected, io::sink(), &mut buf)?;
+
+        entry.verify(hash, count)?;
+    }
     Ok(())
 }
 

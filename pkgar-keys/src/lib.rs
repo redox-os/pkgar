@@ -82,16 +82,16 @@ pub struct PublicKeyFile {
 
 impl PublicKeyFile {
     /// Parse a `PublicKeyFile` from `file` (in toml format).
-    pub fn open(file: &Path) -> Result<PublicKeyFile, Error> {
-        let content = fs::read_to_string(file)
+    pub fn open(file: impl AsRef<Path>) -> Result<PublicKeyFile, Error> {
+        let content = fs::read_to_string(&file)
             .map_err(|src| Error {
-                path: file.to_path_buf(),
+                path: file.as_ref().to_path_buf(),
                 src: ErrorKind::from(src),
             })?;
         
         toml::from_str(&content)
            .map_err(|src| Error {
-               path: file.to_path_buf(),
+               path: file.as_ref().to_path_buf(),
                src: ErrorKind::from(src),
            })
     }
@@ -103,15 +103,15 @@ impl PublicKeyFile {
     }
     
     /// Shortcut to write the public key to `file`
-    pub fn save(&self, file: &Path) -> Result<(), Error> {
+    pub fn save(&self, file: impl AsRef<Path>) -> Result<(), Error> {
         self.write(
-            File::create(file)
+            File::create(&file)
                 .map_err(|src| Error {
-                    path: file.to_path_buf(),
+                    path: file.as_ref().to_path_buf(),
                     src: ErrorKind::from(src)
                 })?
         ).map_err(|src| Error {
-            path: file.to_path_buf(),
+            path: file.as_ref().to_path_buf(),
             src,
         })
     }
@@ -215,16 +215,16 @@ impl SecretKeyFile {
     }
     
     /// Parse a `SecretKeyFile` from `file` (in toml format).
-    pub fn open(file: &Path) -> Result<SecretKeyFile, Error> {
-        let content = fs::read_to_string(file)
+    pub fn open(file: impl AsRef<Path>) -> Result<SecretKeyFile, Error> {
+        let content = fs::read_to_string(&file)
             .map_err(|src| Error {
-                path: file.to_path_buf(),
+                path: file.as_ref().to_path_buf(),
                 src: ErrorKind::Io(src),
             })?;
         
         toml::from_str(&content)
             .map_err(|src| Error {
-                path:file.to_path_buf(),
+                path: file.as_ref().to_path_buf(),
                 src: ErrorKind::Deser(src),
             })
     }
@@ -239,19 +239,19 @@ impl SecretKeyFile {
     ///
     /// Make sure to call `encrypt()` in order to encrypt
     /// the private key, otherwise it will be stored as plain text.
-    pub fn save(&self, file: &Path) -> Result<(), Error> {
+    pub fn save(&self, file: impl AsRef<Path>) -> Result<(), Error> {
         self.write(
             OpenOptions::new()
                 .write(true)
                 .create(true)
                 .mode(0o600)
-                .open(file)
+                .open(&file)
                 .map_err(|src| Error {
-                    path: file.to_path_buf(),
+                    path: file.as_ref().to_path_buf(),
                     src: ErrorKind::from(src),
                 })?
         ).map_err(|src| Error {
-            path: file.to_path_buf(),
+            path: file.as_ref().to_path_buf(),
             src,
         })
     }

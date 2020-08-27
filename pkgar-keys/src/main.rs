@@ -86,7 +86,7 @@ fn cli() -> Result<i32, Error> {
                 .expect("Secret key was encrypted after being decrypted");
             
             if let Some(file) = submatches.value_of("file") {
-                pkey.save(file.as_ref())?;
+                pkey.save(file)?;
             } else {
                 pkey.write(io::stdout().lock())
                     .map_err(|src| Error {

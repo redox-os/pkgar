@@ -8,10 +8,8 @@ use std::path::{Path, PathBuf};
 use blake3::Hash;
 use pkgar_core::{Mode, PackageSrc};
 
-use crate::{Error, ErrorKind};
+use crate::{Error, ErrorKind, READ_WRITE_HASH_BUF_SIZE};
 use crate::ext::{copy_and_hash, EntryExt, PackageSrcExt};
-
-const READ_WRITE_HASH_BUF_SIZE: usize = 4 * 1024 * 1024;
 
 /// Returns `None` if the target path has no parent (was `/`)
 fn temp_path(target_path: impl AsRef<Path>, entry_hash: Hash) -> Result<PathBuf, Error> {

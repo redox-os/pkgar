@@ -14,6 +14,8 @@ use pkgar_core::{Entry, Mode};
 use thiserror::Error;
 use user_error::UFE;
 
+const READ_WRITE_HASH_BUF_SIZE: usize = 4 * 1024 * 1024;
+
 /// This mimics the way std::io::Error works, to manage adding context in an
 /// adequate manner, without too much boilderplate.
 #[derive(Debug, Error)]
