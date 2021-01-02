@@ -1,5 +1,5 @@
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use sodiumoxide::crypto::sign::PublicKey;
@@ -11,7 +11,7 @@ use crate::ext::PackageSrcExt;
 #[derive(Debug)]
 pub struct PackageFile {
     path: PathBuf,
-    src: File,
+    src: BufReader<File>,
     header: Header,
 }
 
@@ -21,12 +21,18 @@ impl PackageFile {
         public_key: &PublicKey
     ) -> Result<PackageFile, Error> {
         let zeroes = [0; HEADER_SIZE];
+        
+        let file = OpenOptions::new()
+            .read(true)
+            .open(&path)
+            .map_err(|e| Error::from(e).path(&path) )?;
+        
         let mut new = PackageFile {
             path: path.as_ref().to_path_buf(),
-            src: OpenOptions::new()
-                .read(true)
-                .open(&path)
-                .map_err(|e| Error::from(e).path(path) )?,
+            src: BufReader::new(file),
+            
+            // Need a blank header to construct the PackageFile, since we need to
+            //   use a method of PackageSrc in order to get the actual header...
             header: unsafe { *Header::new_unchecked(&zeroes)? },
         };
         

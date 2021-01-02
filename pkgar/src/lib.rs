@@ -160,8 +160,8 @@ impl ErrorKind {
     }
 }
 
+// Core::Error doesn't implement std::Error, so thiserror won't generate this impl
 impl From<pkgar_core::Error> for ErrorKind {
-    // Core::Error doesn't implement std::Error, so thiserror won't generate this impl
     fn from(err: pkgar_core::Error) -> ErrorKind {
         ErrorKind::Core(err)
     }

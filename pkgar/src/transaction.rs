@@ -11,15 +11,41 @@ use pkgar_core::{Mode, PackageSrc};
 use crate::{Error, ErrorKind, READ_WRITE_HASH_BUF_SIZE};
 use crate::ext::{copy_and_hash, EntryExt, PackageSrcExt};
 
-/// Returns `None` if the target path has no parent (was `/`)
-fn temp_path(target_path: impl AsRef<Path>, entry_hash: Hash) -> Result<PathBuf, Error> {
-    let tmp_name = if let Some(filename) = target_path.as_ref().file_name() {
-        format!(".pkgar.{}", Path::new(filename).display())
+fn file_exists(path: impl AsRef<Path>) -> Result<bool, Error> {
+    if let Err(err) = fs::metadata(&path) {
+        if err.kind() == io::ErrorKind::NotFound {
+            Ok(false)
+        } else {
+            Err(Error::from(err).path(path))
+        }
     } else {
-        format!(".pkgar.{}", entry_hash.to_hex())
+        Ok(true)
+    }
+}
+
+/// Determine the temporary path for a file, and create its parent directories.
+/// Returns `Err` if the target path has no parent (was `/`).
+fn temp_path(target_path: impl AsRef<Path>, entry_hash: Hash) -> Result<PathBuf, Error> {
+    let target_path = target_path.as_ref();
+    let hash_path = format!(".pkgar.{}", entry_hash.to_hex());
+    
+    let tmp_name = if let Some(filename) = target_path.file_name() {
+        let name_path = format!(".pkgar.{}", Path::new(filename).display());
+        
+        if file_exists(&name_path)? {
+            eprintln!("warn: temporary path already exists at {}", name_path);
+            hash_path
+        } else {
+            name_path
+        }
+    } else {
+        // It's fine to not check the existence of this file, since if the a
+        //   file with the same hash already exists, we know what its
+        //   contents should be.
+        hash_path
     };
     
-    let parent = target_path.as_ref().parent()
+    let parent = target_path.parent()
         .ok_or(ErrorKind::InvalidPathComponent(PathBuf::from("/")))?;
     fs::create_dir_all(&parent)
         .map_err(|e| Error::from(e).path(parent) )?;
