@@ -6,6 +6,7 @@ use std::ops::Deref;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
+use error_chain::bail;
 use hex::FromHex;
 use lazy_static::lazy_static;
 use seckey::SecBytes;
@@ -17,7 +18,7 @@ use sodiumoxide::crypto::{
 };
 use termion::input::TermRead;
 
-pub use error::{ErrorKind, Error};
+pub use crate::error::{ErrorKind, Error, ResultExt};
 
 lazy_static! {
     static ref HOMEDIR: PathBuf = {
@@ -84,20 +85,14 @@ impl PublicKeyFile {
     /// Parse a `PublicKeyFile` from `file` (in toml format).
     pub fn open(file: impl AsRef<Path>) -> Result<PublicKeyFile, Error> {
         let content = fs::read_to_string(&file)
-            .map_err(|src| Error {
-                path: file.as_ref().to_path_buf(),
-                src: ErrorKind::from(src),
-            })?;
+            .chain_err(|| ErrorKind::Path(file.as_ref().to_path_buf()) )?;
         
         toml::from_str(&content)
-           .map_err(|src| Error {
-               path: file.as_ref().to_path_buf(),
-               src: ErrorKind::from(src),
-           })
+           .chain_err(|| ErrorKind::Path(file.as_ref().to_path_buf()) )
     }
     
     /// Write `self` serialized as toml to `w`.
-    pub fn write(&self, mut w: impl Write) -> Result<(), ErrorKind> {
+    pub fn write(&self, mut w: impl Write) -> Result<(), Error> {
         w.write_all(toml::to_string(self)?.as_bytes())?;
         Ok(())
     }
@@ -106,14 +101,8 @@ impl PublicKeyFile {
     pub fn save(&self, file: impl AsRef<Path>) -> Result<(), Error> {
         self.write(
             File::create(&file)
-                .map_err(|src| Error {
-                    path: file.as_ref().to_path_buf(),
-                    src: ErrorKind::from(src)
-                })?
-        ).map_err(|src| Error {
-            path: file.as_ref().to_path_buf(),
-            src,
-        })
+                .chain_err(|| ErrorKind::Path(file.as_ref().to_path_buf()) )?
+        ).chain_err(|| ErrorKind::Path(file.as_ref().to_path_buf()) )
     }
 }
 
@@ -133,7 +122,7 @@ impl SKey {
         }
     }
     
-    fn decrypt(&mut self, passwd: Passwd, salt: pwhash::Salt, nonce: secretbox::Nonce) -> Result<(), ErrorKind> {
+    fn decrypt(&mut self, passwd: Passwd, salt: pwhash::Salt, nonce: secretbox::Nonce) -> Result<(), Error> {
         if let SKey::Cipher(ciphertext) = self {
             if let Some(passwd_key) = passwd.gen_key(salt) {
                 let skey_plain = secretbox::open(ciphertext.as_ref(), &nonce, &passwd_key)
@@ -217,20 +206,14 @@ impl SecretKeyFile {
     /// Parse a `SecretKeyFile` from `file` (in toml format).
     pub fn open(file: impl AsRef<Path>) -> Result<SecretKeyFile, Error> {
         let content = fs::read_to_string(&file)
-            .map_err(|src| Error {
-                path: file.as_ref().to_path_buf(),
-                src: ErrorKind::Io(src),
-            })?;
+            .chain_err(|| ErrorKind::Path(file.as_ref().to_path_buf()) )?;
         
         toml::from_str(&content)
-            .map_err(|src| Error {
-                path: file.as_ref().to_path_buf(),
-                src: ErrorKind::Deser(src),
-            })
+            .chain_err(|| ErrorKind::Path(file.as_ref().to_path_buf()) )
     }
     
     /// Write `self` serialized as toml to `w`.
-    pub fn write(&self, mut w: impl Write) -> Result<(), ErrorKind> {
+    pub fn write(&self, mut w: impl Write) -> Result<(), Error> {
         w.write_all(toml::to_string(&self)?.as_bytes())?;
         Ok(())
     }
@@ -246,14 +229,8 @@ impl SecretKeyFile {
                 .create(true)
                 .mode(0o600)
                 .open(&file)
-                .map_err(|src| Error {
-                    path: file.as_ref().to_path_buf(),
-                    src: ErrorKind::from(src),
-                })?
-        ).map_err(|src| Error {
-            path: file.as_ref().to_path_buf(),
-            src,
-        })
+                .chain_err(|| ErrorKind::Path(file.as_ref().to_path_buf()) )?
+        ).chain_err(|| ErrorKind::Path(file.as_ref().to_path_buf()) )
     }
     
     /// Ensure that the internal state of this struct is encrypted.
@@ -264,7 +241,7 @@ impl SecretKeyFile {
     
     /// Ensure that the internal state of this struct is decrypted.
     /// If the internal state is already decrypted, this function is a no-op.
-    pub fn decrypt(&mut self, passwd: Passwd) -> Result<(), ErrorKind> {
+    pub fn decrypt(&mut self, passwd: Passwd) -> Result<(), Error> {
         self.skey.decrypt(passwd, self.salt, self.nonce)
     }
     
@@ -313,7 +290,7 @@ impl Passwd {
     }
     
     /// Prompt the user for a `Passwd` on stdin.
-    pub fn prompt(prompt: impl AsRef<str>) -> Result<Passwd, ErrorKind> {
+    pub fn prompt(prompt: impl AsRef<str>) -> Result<Passwd, Error> {
         let stdout = stdout();
         let mut stdout = stdout.lock();
         let stdin = stdin();
@@ -336,17 +313,16 @@ impl Passwd {
     
     /// Prompt for a password on stdin and confirm it. For configurable
     /// prompts, use [`Passwd::prompt`](struct.Passwd.html#method.prompt).
-    pub fn prompt_new() -> Result<Passwd, ErrorKind> {
+    pub fn prompt_new() -> Result<Passwd, Error> {
         let passwd = Passwd::prompt(
             "Please enter a new passphrase (leave empty to store the key in plaintext): "
         )?;
         let confirm = Passwd::prompt("Please re-enter the passphrase: ")?;
-    
+        
         if passwd != confirm {
-            Err(ErrorKind::PassphraseMismatch)
-        } else {
-            Ok(passwd)
+            bail!(ErrorKind::PassphraseMismatch);
         }
+        Ok(passwd)
     }
     
     /// Get a key for symmetric key encryption from a password.
@@ -382,10 +358,7 @@ impl Eq for Passwd {}
 /// directories will not be created.
 pub fn gen_keypair(pkey_path: &Path, skey_path: &Path) -> Result<(PublicKeyFile, SecretKeyFile), Error> {
     let passwd = Passwd::prompt_new()
-        .map_err(|src| Error {
-            path: skey_path.to_path_buf(),
-            src,
-        })?;
+        .chain_err(|| ErrorKind::Path(skey_path.to_path_buf()) )?;
     
     let (pkey_file, mut skey_file) = SecretKeyFile::new();
     
@@ -399,18 +372,13 @@ pub fn gen_keypair(pkey_path: &Path, skey_path: &Path) -> Result<(PublicKeyFile,
 }
 
 fn prompt_skey(skey_path: &Path, prompt: impl AsRef<str>) -> Result<SecretKeyFile, Error> {
-    let to_file_err = |src| Error {
-        path: skey_path.to_path_buf(),
-        src,
-    };
-    
     let mut key_file = SecretKeyFile::open(skey_path)?;
     
     if key_file.is_encrypted() {
         let passwd = Passwd::prompt(&format!("{} {}: ", prompt.as_ref(), skey_path.display()))
-            .map_err(to_file_err)?;
+            .chain_err(|| ErrorKind::Path(skey_path.to_path_buf()) )?;
         key_file.decrypt(passwd)
-            .map_err(to_file_err)?;
+            .chain_err(|| ErrorKind::Path(skey_path.to_path_buf()) )?;
     }
     Ok(key_file)
 }
@@ -427,10 +395,7 @@ pub fn re_encrypt(skey_path: &Path) -> Result<(), Error> {
     let mut skey_file = prompt_skey(skey_path, "Old passphrase for")?;
     
     let passwd = Passwd::prompt_new()
-        .map_err(|src| Error {
-            path: skey_path.to_path_buf(),
-            src,
-        })?;
+        .chain_err(|| ErrorKind::Path(skey_path.to_path_buf()) )?;
     skey_file.encrypt(passwd);
     
     skey_file.save(skey_path)

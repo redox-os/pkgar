@@ -8,7 +8,7 @@ use pkgar_core::{Entry, Header, Mode, PackageSrc};
 use pkgar_keys::PublicKeyFile;
 use sodiumoxide::crypto::sign;
 
-use crate::{Error, ErrorKind, READ_WRITE_HASH_BUF_SIZE};
+use crate::{Error, ErrorKind, READ_WRITE_HASH_BUF_SIZE, ResultExt};
 use crate::ext::{copy_and_hash, EntryExt};
 use crate::package::PackageFile;
 use crate::transaction::Transaction;
@@ -94,15 +94,13 @@ pub fn create(
         .create(true)
         .truncate(true)
         .open(&archive_path)
-        .map_err(|e| Error::from(e).path(&archive_path) )?;
+        .chain_err(|| ErrorKind::Path(archive_path.as_ref().to_path_buf()) )?;
 
     // Create a list of entries
     let mut entries = Vec::new();
     folder_entries(&folder, &folder, &mut entries)
-        .map_err(|e| Error::from(e)
-            .reason("Recursing buildroot")
-            .path(&folder)
-        )?;
+        .chain_err(|| ErrorKind::Path(folder.as_ref().to_path_buf()) )
+        .chain_err(|| "Recursing buildroot" )?;
 
     // Create initial header
     let mut header = Header {
@@ -120,14 +118,13 @@ pub fn create(
         entry.offset = data_size;
         data_size = data_size.checked_add(entry.size)
             .ok_or(pkgar_core::Error::Overflow)?;
+            //.chain_err(|| ErrorKind::Entry(*entry) )?;
     }
 
     let data_offset = header.total_size()?;
     archive_file.seek(SeekFrom::Start(data_offset as u64))
-        .map_err(|e| Error::from(e)
-            .reason(format!("Seek to {} (data offset)", data_offset))
-            .path(&archive_path)
-        )?;
+        .chain_err(|| ErrorKind::Path(archive_path.as_ref().to_path_buf()) )
+        .chain_err(|| format!("Seek to {} (data offset)", data_offset) )?;
 
     //TODO: fallocate data_offset + data_size
 
@@ -139,47 +136,37 @@ pub fn create(
         let path = folder.as_ref().join(relative);
 
         let mode = entry.mode()
-            .map_err(|e| Error::from(e)
-                .entry(*entry)
-            )?;
+            .map_err(Error::from)
+            .chain_err(|| ErrorKind::Entry(*entry) )?;
 
         let (total, hash) = match mode.kind() {
             Mode::FILE => {
                 let mut entry_file = fs::OpenOptions::new()
                     .read(true)
                     .open(&path)
-                    .map_err(|e| Error::from(e).path(&path) )?;
+                    .chain_err(|| ErrorKind::Path(path.to_path_buf()) )?;
                 
                 copy_and_hash(&mut entry_file, &mut archive_file, &mut buf)
-                    .map_err(|e| Error::from(e)
-                        .reason(format!("Writing entry to archive: '{}'", relative.display()))
-                        .path(&path)
-                    )?
+                    .chain_err(|| ErrorKind::Path(path.to_path_buf()) )
+                    .chain_err(|| format!("Writing entry to archive: '{}'", relative.display()) )?
             },
             Mode::SYMLINK => {
                 let destination = fs::read_link(&path)
-                    .map_err(|e| Error::from(e).path(&path) )?;
+                    .chain_err(|| ErrorKind::Path(path.to_path_buf()) )?;
 
                 let mut data = destination.as_os_str().as_bytes();
                 copy_and_hash(&mut data, &mut archive_file, &mut buf)
-                    .map_err(|e| Error::from(e)
-                        .reason(format!("Writing entry to archive: '{}'", relative.display()))
-                        .path(&path)
-                    )?
+                    .chain_err(|| ErrorKind::Path(path.to_path_buf()) )
+                    .chain_err(|| format!("Writing entry to archive: '{}'", relative.display()) )?
             },
             _ => return Err(Error::from(
                     pkgar_core::Error::InvalidMode(mode.bits())
-                )
-                .entry(*entry)),
+                ))
+                .chain_err(|| ErrorKind::Entry(*entry) ),
         };
         if total != entry.size() {
-            return Err(ErrorKind::LengthMismatch {
-                    actual: total,
-                    expected: entry.size(),
-                }
-                .as_error()
-                .entry(*entry)
-            );
+            return Err(Error::from_kind(ErrorKind::LengthMismatch(total, entry.size())))
+                .chain_err(|| ErrorKind::Entry(*entry) );
         }
         entry.blake3.copy_from_slice(hash.as_bytes());
 
@@ -195,12 +182,12 @@ pub fn create(
 
     // Write archive header
     archive_file.seek(SeekFrom::Start(0))
-        .map_err(|e| Error::from(e).path(&archive_path) )?;
+        .chain_err(|| ErrorKind::Path(archive_path.as_ref().to_path_buf()) )?;
 
     archive_file.write_all(unsafe {
         plain::as_bytes(&header)
     })
-        .map_err(|e| Error::from(e).path(&archive_path) )?;
+        .chain_err(|| ErrorKind::Path(archive_path.as_ref().to_path_buf()) )?;
 
     // Write each entry header
     for entry in &entries {
@@ -208,10 +195,8 @@ pub fn create(
         archive_file.write_all(unsafe {
             plain::as_bytes(entry)
         })
-            .map_err(|e| Error::from(e)
-                .reason(format!("Write entry {}", checked_path.display()))
-                .path(&archive_path)
-            )?;
+            .chain_err(|| ErrorKind::Path(archive_path.as_ref().to_path_buf()) )
+            .chain_err(|| format!("Write entry {}", checked_path.display()) )?;
     }
 
     Ok(())
@@ -277,7 +262,7 @@ pub fn verify(
             .join(entry.check_path()?);
 
         let expected = File::open(&expected_path)
-            .map_err(|e| Error::from(e).path(expected_path) )?;
+            .chain_err(|| ErrorKind::Path(expected_path.to_path_buf()) )?;
 
         let (count, hash) = copy_and_hash(expected, io::sink(), &mut buf)?;
 

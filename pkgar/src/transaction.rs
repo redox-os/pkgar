@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use blake3::Hash;
 use pkgar_core::{Mode, PackageSrc};
 
-use crate::{Error, ErrorKind, READ_WRITE_HASH_BUF_SIZE};
+use crate::{Error, ErrorKind, READ_WRITE_HASH_BUF_SIZE, ResultExt};
 use crate::ext::{copy_and_hash, EntryExt, PackageSrcExt};
 
 fn file_exists(path: impl AsRef<Path>) -> Result<bool, Error> {
@@ -16,7 +16,8 @@ fn file_exists(path: impl AsRef<Path>) -> Result<bool, Error> {
         if err.kind() == io::ErrorKind::NotFound {
             Ok(false)
         } else {
-            Err(Error::from(err).path(path))
+            Err(Error::from(err)
+                .chain_err(|| path.as_ref() ))
         }
     } else {
         Ok(true)
@@ -47,8 +48,8 @@ fn temp_path(target_path: impl AsRef<Path>, entry_hash: Hash) -> Result<PathBuf,
     
     let parent = target_path.parent()
         .ok_or(ErrorKind::InvalidPathComponent(PathBuf::from("/")))?;
-    fs::create_dir_all(&parent)
-        .map_err(|e| Error::from(e).path(parent) )?;
+    fs::create_dir_all(parent)
+        .chain_err(|| parent )?;
     Ok(parent.join(tmp_name))
 }
 
@@ -59,16 +60,19 @@ enum Action {
 }
 
 impl Action {
-    fn commit(&self) -> io::Result<()> {
+    fn commit(&self) -> Result<(), Error> {
         match self {
-            Action::Rename(tmp, target) => fs::rename(tmp, target),
-            Action::Remove(target) => fs::remove_file(target),
+            Action::Rename(tmp, target) => fs::rename(&tmp, target)
+                .chain_err(|| tmp.as_path() ),
+            Action::Remove(target) => fs::remove_file(&target)
+                .chain_err(|| target.as_path() ),
         }
     }
     
-    fn abort(&self) -> io::Result<()> {
+    fn abort(&self) -> Result<(), Error> {
         match self {
-            Action::Rename(tmp, _) => fs::remove_file(tmp),
+            Action::Rename(tmp, _) => fs::remove_file(&tmp)
+                .chain_err(|| tmp.as_path() ),
             Action::Remove(_) => Ok(()),
         }
     }
@@ -92,7 +96,7 @@ impl Transaction {
         
         for entry in entries {
             let relative_path = entry.check_path()
-                .map_err(|e| e.path(src.path()) )?;
+                .chain_err(|| src.path() )?;
             
             let target_path = base_dir.as_ref().join(relative_path);
             //HELP: Under what circumstances could this ever fail?
@@ -102,10 +106,9 @@ impl Transaction {
             let tmp_path = temp_path(&target_path, entry.blake3())?;
             
             let mode = entry.mode()
-                .map_err(|e| Error::from(e)
-                    .path(src.path())
-                    .entry(entry)
-                )?;
+                .map_err(Error::from)
+                .chain_err(|| src.path() )
+                .chain_err(|| ErrorKind::Entry(entry) )?;
             
             let (entry_data_size, entry_data_hash) = match mode.kind() {
                 Mode::FILE => {
@@ -116,40 +119,35 @@ impl Transaction {
                         .truncate(true)
                         .mode(mode.perm().bits())
                         .open(&tmp_path)
-                        .map_err(|e| Error::from(e).path(&tmp_path) )?;
+                        .chain_err(|| tmp_path.as_path() )?;
                     
                     copy_and_hash(src.entry_reader(entry), &mut tmp_file, &mut buf)
-                        .map_err(|e| Error::from(e)
-                            .reason(format!("Copying entry to tempfile: '{}'", relative_path.display()))
-                            .path(&tmp_path)
-                        )?
+                        .chain_err(|| tmp_path.as_path() )
+                        .chain_err(|| format!("Copying entry to tempfile: '{}'", relative_path.display()) )?
                 },
                 Mode::SYMLINK => {
                     let mut data = Vec::new();
                     let (size, hash) = copy_and_hash(src.entry_reader(entry), &mut data, &mut buf)
-                        .map_err(|e| Error::from(e)
-                            .reason(format!("Copying entry to tempfile: '{}'", relative_path.display()))
-                            .path(&tmp_path)
-                        )?;
-                    let sym_target: &OsStr = OsStrExt::from_bytes(data.as_slice());
+                        .chain_err(|| tmp_path.as_path() )
+                        .chain_err(|| format!("Copying entry to tempfile: '{}'", relative_path.display()) )?;
+                    
+                    let sym_target = Path::new(OsStr::from_bytes(&data));
                     symlink(sym_target, &tmp_path)
-                        .map_err(|e| Error::from(e)
-                            .reason(format!("Symlinking to {}", tmp_path.display()))
-                            .path(&sym_target)
-                        )?;
+                        .chain_err(|| sym_target )
+                        .chain_err(|| format!("Symlinking to {}", tmp_path.display()) )?;
                     (size, hash)
                 },
                 _ => {
                     return Err(Error::from(
                             pkgar_core::Error::InvalidMode(mode.bits())
-                        )
-                        .entry(entry)
-                        .path(src.path()));
+                        ))
+                        .chain_err(|| ErrorKind::Entry(entry) )
+                        .chain_err(|| src.path() );
                 }
             };
             
             entry.verify(entry_data_hash, entry_data_size)
-                .map_err(|e| e.path(src.path()))?;
+                .chain_err(|| src.path() )?;
             
             actions.push(Action::Rename(tmp_path, target_path))
         }
@@ -207,14 +205,12 @@ impl Transaction {
                 "target path was not in the base path");
             
             let candidate = File::open(&target_path)
-                .map_err(|e| Error::from(e).path(&target_path) )?;
+                .chain_err(|| target_path.as_path() )?;
             
             // Ensure that the deletion candidate on disk has not been modified
             copy_and_hash(candidate, io::sink(), &mut buf)
-                .map_err(|e| Error::from(e)
-                    .reason(format!("Hashing file for entry: '{}'", relative_path.display()))
-                    .path(&target_path)
-                )?;
+                .chain_err(|| target_path.as_path() )
+                .chain_err(|| format!("Hashing file for entry: '{}'", relative_path.display()) )?;
             
             actions.push(Action::Remove(target_path));
         }
@@ -229,11 +225,7 @@ impl Transaction {
             if let Err(err) = action.commit() {
                 // Should be possible to restart a failed transaction
                 self.actions.push(action);
-                return Err(ErrorKind::FailedCommit {
-                    changed: count,
-                    remaining: self.actions.len(),
-                    source: err,
-                }.into());  //TODO: Add path context to this error
+                return Err(err.chain_err(|| ErrorKind::FailedCommit(count, self.actions.len()) ));
             }
             count += 1;
         }
@@ -253,12 +245,7 @@ impl Transaction {
                 self.actions.insert(0, action);
                 if last_failed {
                     //TODO: Somehow indicate that this is a failed abort instead of a commit
-                    //TODO: Add path context to this error
-                    return Err(ErrorKind::FailedCommit {
-                        changed: count,
-                        remaining: self.actions.len(),
-                        source: err,
-                    }.into());
+                    return Err(err.chain_err(|| ErrorKind::FailedCommit(count, self.actions.len()) ));
                 } else {
                     last_failed = true;
                 }
