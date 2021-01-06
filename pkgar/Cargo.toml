@@ -24,6 +24,10 @@ version = "0.3.6"
 default-features = false
 features = ["rayon"]
 
+[dev-dependencies]
+copy_dir = "0.1.2"
+tempfile = "3.1.0"
+
 [features]
 default = ["clap", "std"]
 std = []

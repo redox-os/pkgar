@@ -37,12 +37,12 @@ pub trait PackageSrc {
     }
     
     /// Read from this src at a given entry's data with a given offset within that entry
-    fn read_entry(&mut self, entry: Entry, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Err> {
-        if offset > entry.size {
+    fn read_entry(&mut self, entry: Entry, offset: usize, buf: &mut [u8]) -> Result<usize, Self::Err> {
+        if offset as u64 > entry.size {
             return Ok(0);
         }
         
-        let mut end = usize::try_from(entry.size - offset)
+        let mut end = usize::try_from(entry.size - offset as u64)
             .map_err(Error::TryFromInt)?;
         
         if end > buf.len() {
@@ -52,9 +52,9 @@ pub trait PackageSrc {
         let offset =
             HEADER_SIZE as u64 +
             self.header().entries_size()? +
-            entry.offset + offset;
+            entry.offset + offset as u64;
         
-        self.read_at(offset, &mut buf[..end])
+        self.read_at(offset as u64, &mut buf[..end])
     }
 }
 

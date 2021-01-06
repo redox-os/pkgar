@@ -1,25 +1,38 @@
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom};
-use std::path::Path;
+use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
 
 use sodiumoxide::crypto::sign::PublicKey;
 use pkgar_core::{Header, HEADER_SIZE, PackageSrc};
 
 use crate::Error;
+use crate::ext::PackageSrcExt;
 
 #[derive(Debug)]
 pub struct PackageFile {
-    pub(crate) src: File,
+    path: PathBuf,
+    src: BufReader<File>,
     header: Header,
 }
 
 impl PackageFile {
-    pub fn new(path: impl AsRef<Path>, public_key: &PublicKey) -> Result<PackageFile, Error> {
+    pub fn new(
+        path: impl AsRef<Path>,
+        public_key: &PublicKey
+    ) -> Result<PackageFile, Error> {
         let zeroes = [0; HEADER_SIZE];
+        
+        let file = OpenOptions::new()
+            .read(true)
+            .open(&path)
+            .map_err(|e| Error::from(e).path(&path) )?;
+        
         let mut new = PackageFile {
-            src: OpenOptions::new()
-                .read(true)
-                .open(path)?,
+            path: path.as_ref().to_path_buf(),
+            src: BufReader::new(file),
+            
+            // Need a blank header to construct the PackageFile, since we need to
+            //   use a method of PackageSrc in order to get the actual header...
             header: unsafe { *Header::new_unchecked(&zeroes)? },
         };
         
@@ -36,8 +49,16 @@ impl PackageSrc for PackageFile {
     }
     
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Err> {
-        self.src.seek(SeekFrom::Start(offset))?;
-        Ok(self.src.read(buf)?)
+        self.src.seek(SeekFrom::Start(offset))
+            .map_err(|e| Error::from(e).path(&self.path) )?;
+        Ok(self.src.read(buf)
+           .map_err(|e| Error::from(e).path(&self.path) )?)
+    }
+}
+
+impl PackageSrcExt for PackageFile {
+    fn path(&self) -> &Path {
+        &self.path
     }
 }
 

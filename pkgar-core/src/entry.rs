@@ -1,5 +1,8 @@
 //! The packed structs represent the on-disk format of pkgar
+use blake3::Hash;
 use plain::Plain;
+
+use crate::{Error, Mode};
 
 #[derive(Clone, Copy, Debug)]
 #[repr(packed)]
@@ -17,8 +20,8 @@ pub struct Entry {
 }
 
 impl Entry {
-    pub fn blake3(&self) -> [u8; 32] {
-        self.blake3
+    pub fn blake3(&self) -> Hash {
+        Hash::from(self.blake3)
     }
     
     pub fn offset(&self) -> u64 {
@@ -29,12 +32,13 @@ impl Entry {
         self.size
     }
     
-    pub fn mode(&self) -> u32 {
-        self.mode
+    pub fn mode(&self) -> Result<Mode, Error> {
+        Mode::from_bits(self.mode)
+            .ok_or(Error::InvalidMode(self.mode))
     }
     
     /// Retrieve the path, ending at the first NUL
-    pub fn path(&self) -> &[u8] {
+    pub fn path_bytes(&self) -> &[u8] {
         let mut i = 0;
         while i < self.path.len() {
             if self.path[i] == 0 {

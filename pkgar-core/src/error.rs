@@ -4,9 +4,10 @@ use core::fmt::{Display, Formatter, Result};
 
 #[derive(Debug)]
 pub enum Error {
+    InvalidBlake3,
     InvalidData,
     InvalidKey,
-    InvalidBlake3,
+    InvalidMode(u32),
     InvalidSignature,
     Plain(plain::Error),
     Overflow,
@@ -19,10 +20,11 @@ impl Display for Error {
         use Error::*;
         
         let msg = match self {
-            InvalidData => "DataInvalid".to_string(),
-            InvalidKey => "KeyInvalid".to_string(),
-            InvalidBlake3 => "InvalidBlake3".to_string(),
-            InvalidSignature => "InvalidSignature".to_string(),
+            InvalidBlake3 => "Invalid Blake3".to_string(),
+            InvalidData => "Data Invalid".to_string(),
+            InvalidKey => "Key Invalid".to_string(),
+            InvalidMode(mode) => format!("Invalid Mode: {:o}", mode),
+            InvalidSignature => "Invalid Signature".to_string(),
             Plain(err) => format!("Plain: {:?}", err),
             Overflow => "Overflow".to_string(),
             TryFromInt(err) => format!("TryFromInt: {}", err),
