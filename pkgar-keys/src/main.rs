@@ -1,6 +1,6 @@
 use std::io;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 
 use clap::clap_app;
@@ -54,7 +54,7 @@ fn cli() -> Result<i32, Error> {
         "gen" => {
             if let Some(keydir) = skey_path.parent() {
                 fs::create_dir_all(&keydir)
-                    .chain_err(|| ErrorKind::Path(keydir.to_path_buf()) )?;
+                    .chain_err(|| keydir )?;
             }
             
             if ! submatches.is_present("force") {
@@ -62,7 +62,7 @@ fn cli() -> Result<i32, Error> {
                     return Err(Error::from_kind(ErrorKind::Io(
                             io::Error::from(io::ErrorKind::AlreadyExists)
                         )))
-                        .chain_err(|| ErrorKind::Path(skey_path.to_path_buf()) );
+                        .chain_err(|| &skey_path );
                 }
             }
             
@@ -87,7 +87,7 @@ fn cli() -> Result<i32, Error> {
                 pkey.save(file)?;
             } else {
                 pkey.write(io::stdout().lock())
-                    .chain_err(|| ErrorKind::Path(PathBuf::from("stdout")) )?;
+                    .chain_err(|| Path::new("stdout") )?;
             }
         },
         "rencrypt" => {

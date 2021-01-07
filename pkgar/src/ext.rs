@@ -67,7 +67,6 @@ pub trait PackageSrcExt
 
 /// A reader that provides acess to one entry's data within a `PackageSrc`.
 /// Use `PackageSrcExt::entry_reader` for construction
-//TODO: Fix the types for this
 pub struct EntryReader<'a, Src>
     where Src: PackageSrc
 {
@@ -84,6 +83,8 @@ impl<Src, E> Read for EntryReader<'_, Src>
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let count = self.src.read_entry(self.entry, self.pos, buf)
             // This is a little painful, since e is pkgar::Error...
+            // However, this is likely to be a very rarely triggered error
+            // condition.
             .map_err(|err|
                 io::Error::new(io::ErrorKind::Other, err.to_string())
             )?;

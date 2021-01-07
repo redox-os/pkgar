@@ -26,7 +26,7 @@ impl PackageFile {
         let file = OpenOptions::new()
             .read(true)
             .open(&path)
-            .chain_err(|| path.as_path() )?;
+            .chain_err(|| &path )?;
         
         let mut new = PackageFile {
             path,

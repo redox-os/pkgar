@@ -94,12 +94,12 @@ pub fn create(
         .create(true)
         .truncate(true)
         .open(&archive_path)
-        .chain_err(|| ErrorKind::Path(archive_path.as_ref().to_path_buf()) )?;
+        .chain_err(|| archive_path.as_ref() )?;
 
     // Create a list of entries
     let mut entries = Vec::new();
     folder_entries(&folder, &folder, &mut entries)
-        .chain_err(|| ErrorKind::Path(folder.as_ref().to_path_buf()) )
+        .chain_err(|| folder.as_ref() )
         .chain_err(|| "Recursing buildroot" )?;
 
     // Create initial header
@@ -117,13 +117,14 @@ pub fn create(
     for entry in &mut entries {
         entry.offset = data_size;
         data_size = data_size.checked_add(entry.size)
-            .ok_or(pkgar_core::Error::Overflow)?;
-            //.chain_err(|| ErrorKind::Entry(*entry) )?;
+            .ok_or(pkgar_core::Error::Overflow)
+            .map_err(Error::from)
+            .chain_err(|| ErrorKind::Entry(*entry) )?;
     }
 
     let data_offset = header.total_size()?;
     archive_file.seek(SeekFrom::Start(data_offset as u64))
-        .chain_err(|| ErrorKind::Path(archive_path.as_ref().to_path_buf()) )
+        .chain_err(|| archive_path.as_ref() )
         .chain_err(|| format!("Seek to {} (data offset)", data_offset) )?;
 
     //TODO: fallocate data_offset + data_size
@@ -144,19 +145,19 @@ pub fn create(
                 let mut entry_file = fs::OpenOptions::new()
                     .read(true)
                     .open(&path)
-                    .chain_err(|| ErrorKind::Path(path.to_path_buf()) )?;
+                    .chain_err(|| &path )?;
                 
                 copy_and_hash(&mut entry_file, &mut archive_file, &mut buf)
-                    .chain_err(|| ErrorKind::Path(path.to_path_buf()) )
+                    .chain_err(|| &path )
                     .chain_err(|| format!("Writing entry to archive: '{}'", relative.display()) )?
             },
             Mode::SYMLINK => {
                 let destination = fs::read_link(&path)
-                    .chain_err(|| ErrorKind::Path(path.to_path_buf()) )?;
+                    .chain_err(|| &path )?;
 
                 let mut data = destination.as_os_str().as_bytes();
                 copy_and_hash(&mut data, &mut archive_file, &mut buf)
-                    .chain_err(|| ErrorKind::Path(path.to_path_buf()) )
+                    .chain_err(|| &path )
                     .chain_err(|| format!("Writing entry to archive: '{}'", relative.display()) )?
             },
             _ => return Err(Error::from(
@@ -182,12 +183,12 @@ pub fn create(
 
     // Write archive header
     archive_file.seek(SeekFrom::Start(0))
-        .chain_err(|| ErrorKind::Path(archive_path.as_ref().to_path_buf()) )?;
+        .chain_err(|| archive_path.as_ref() )?;
 
     archive_file.write_all(unsafe {
         plain::as_bytes(&header)
     })
-        .chain_err(|| ErrorKind::Path(archive_path.as_ref().to_path_buf()) )?;
+        .chain_err(|| archive_path.as_ref() )?;
 
     // Write each entry header
     for entry in &entries {
@@ -195,7 +196,7 @@ pub fn create(
         archive_file.write_all(unsafe {
             plain::as_bytes(entry)
         })
-            .chain_err(|| ErrorKind::Path(archive_path.as_ref().to_path_buf()) )
+            .chain_err(|| archive_path.as_ref() )
             .chain_err(|| format!("Write entry {}", checked_path.display()) )?;
     }
 
@@ -262,7 +263,7 @@ pub fn verify(
             .join(entry.check_path()?);
 
         let expected = File::open(&expected_path)
-            .chain_err(|| ErrorKind::Path(expected_path.to_path_buf()) )?;
+            .chain_err(|| &expected_path )?;
 
         let (count, hash) = copy_and_hash(expected, io::sink(), &mut buf)?;
 

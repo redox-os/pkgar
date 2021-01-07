@@ -14,7 +14,6 @@ pub enum Error {
     TryFromInt(core::num::TryFromIntError),
 }
 
-//TODO: Improve Error messages
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter) -> Result {
         use Error::*;
