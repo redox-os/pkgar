@@ -14,7 +14,7 @@ pub trait PackageSrc {
     fn header(&self) -> Header;
     
     /// Users of implementors of `PackageSrc` should use `header` instead of `read_header` for
-    /// cheap header access.
+    /// header access.
     /// Implementors of `PackageSrc` should call this function during initialization and store
     /// the result to pass out with `header`.
     fn read_header(&mut self, public_key: &PublicKey) -> Result<Header, Self::Err> {

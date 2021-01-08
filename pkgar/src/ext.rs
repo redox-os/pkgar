@@ -4,6 +4,7 @@ use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path};
 
+use error_chain::bail;
 use blake3::{Hash, Hasher};
 use pkgar_core::{Entry, PackageSrc};
 
@@ -11,12 +12,44 @@ use crate::{Error, ErrorKind, ResultExt};
 
 /// Handy associated functions for `pkgar_core::Entry` that depend on std
 pub trait EntryExt {
+    fn new(
+        blake3: Hash,
+        offset: u64,
+        size: u64,
+        mode: u32,
+        path: &Path
+    ) -> Result<Entry, Error>;
+
     fn check_path(&self) -> Result<&Path, Error>;
     
     fn verify(&self, blake3: Hash, size: u64) -> Result<(), Error>;
 }
 
 impl EntryExt for Entry {
+    fn new(
+        blake3: Hash,
+        offset: u64,
+        size: u64,
+        mode: u32,
+        path: &Path
+    ) -> Result<Entry, Error> {
+        let mut path_buf = [0; 256];
+        let path_bytes = path.as_os_str().as_bytes();
+
+        if path_bytes.len() >= path_buf.len() {
+            bail!(ErrorKind::PathTooLong(path.to_path_buf()));
+        }
+        path_buf[..path_bytes.len()].copy_from_slice(path_bytes);
+
+        Ok(Entry {
+            blake3: blake3.into(),
+            offset,
+            size,
+            mode,
+            path: path_buf,
+        })
+    }
+
     /// Iterate the components of the path and ensure that there are no
     /// non-normal components.
     fn check_path(&self) -> Result<&Path, Error> {
@@ -35,16 +68,17 @@ impl EntryExt for Entry {
         }
         Ok(&path)
     }
-    
+
+    /// Compare the given blake3 and size against this Entry's blake3 and size
+    /// and return Err if they do not match
     fn verify(&self, blake3: Hash, size: u64) -> Result<(), Error> {
         if size != self.size() {
             Err(Error::from_kind(ErrorKind::LengthMismatch(size, self.size())))
-                .chain_err(|| ErrorKind::Entry(*self) )
         } else if blake3 != self.blake3() {
             Err(pkgar_core::Error::InvalidBlake3.into())
         } else {
             Ok(())
-        }
+        }.chain_err(|| ErrorKind::Entry(*self) )
     }
 }
 
@@ -54,7 +88,7 @@ pub trait PackageSrcExt
     /// Get the path corresponding to this `PackageSrc`. This will likely be
     /// refactored to use something more generic than `Path` in future.
     fn path(&self) -> &Path;
-    
+
     /// Build a reader for a given entry on this source.
     fn entry_reader(&mut self, entry: Entry) -> EntryReader<'_, Self> {
         EntryReader {
@@ -110,9 +144,29 @@ pub(crate) fn copy_and_hash<R: Read, W: Write>(
         }
         written += count as u64;
         hasher.update_with_join::<blake3::join::RayonJoin>(&buf[..count]);
-        
+
         write.write_all(&buf[..count])?;
     }
     Ok((written, hasher.finalize()))
+}
+
+#[cfg(test)]
+mod test {
+    use std::path::Path;
+
+    use pkgar_core::Entry;
+
+    use crate::{ext::EntryExt, Error};
+
+    #[test]
+    fn entry_constructor() -> Result<(), Error> {
+        const ENTRY_DATA: &str = "some file contents";
+
+        let hash = blake3::hash(ENTRY_DATA.as_bytes());
+
+        let entry = Entry::new(hash, 0, ENTRY_DATA.len() as u64, 0o777, Path::new("/some/filepath"))?;
+
+        entry.verify(hash, ENTRY_DATA.len() as u64)
+    }
 }
 

@@ -9,6 +9,7 @@ edition = "2018"
 
 [dependencies]
 error-chain = "0.12"
+libc = "0.2"
 plain = "0.2.3"
 pkgar-core = { path = "../pkgar-core" }
 pkgar-keys = { path = "../pkgar-keys" }
