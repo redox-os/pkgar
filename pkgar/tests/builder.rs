@@ -50,6 +50,8 @@ fn format_print_archive(archive: &[u8]) {
     eprintln!("Data\n{:02x?}", &archive[HEADER_SIZE + ENTRY_SIZE..]);
 }
 
+const SOME_FILE_PATH: &str = "some/file";
+const SOME_FILE_MODE: Mode = Mode::from_bits_truncate(0o640);
 const SOME_FILE_CONTENTS: &[u8; 18] = b"some file contents";
 
 #[test]
@@ -59,7 +61,7 @@ fn builder_file_writer() -> Result<(), Error> {
     let mut archive_dest = io::Cursor::new(Vec::new());
     
     let mut builder = PackageBuilder::new(skey);
-    builder.file_reader(&SOME_FILE_CONTENTS[..], "/somefile", 0o640);
+    builder.file_reader(&SOME_FILE_CONTENTS[..], SOME_FILE_PATH, SOME_FILE_MODE);
     builder.write_archive(&mut archive_dest)?;
     
     // Check raw archive
@@ -77,8 +79,8 @@ fn builder_file_writer() -> Result<(), Error> {
     
     let entry = src.read_entries()?[0];
     
-    assert_eq!(b"/somefile", entry.path_bytes());
-    assert_eq!(Mode::from_bits(0o640), Some(entry.mode()?));
+    assert_eq!(SOME_FILE_PATH.as_bytes(), entry.path_bytes());
+    assert_eq!(SOME_FILE_MODE, entry.mode()?);
     assert_eq!(18, entry.size());
     assert_eq!(0, entry.offset());
     

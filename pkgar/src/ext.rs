@@ -6,7 +6,7 @@ use std::path::{Component, Path};
 
 use error_chain::bail;
 use blake3::{Hash, Hasher};
-use pkgar_core::{Entry, PackageSrc};
+use pkgar_core::{Entry, Mode, PackageSrc};
 
 use crate::{Error, ErrorKind, ResultExt};
 
@@ -16,7 +16,7 @@ pub trait EntryExt {
         blake3: Hash,
         offset: u64,
         size: u64,
-        mode: u32,
+        mode: Mode,
         path: &Path
     ) -> Result<Entry, Error>;
 
@@ -30,7 +30,7 @@ impl EntryExt for Entry {
         blake3: Hash,
         offset: u64,
         size: u64,
-        mode: u32,
+        mode: Mode,
         path: &Path
     ) -> Result<Entry, Error> {
         let mut path_buf = [0; 256];
@@ -45,7 +45,7 @@ impl EntryExt for Entry {
             blake3: blake3.into(),
             offset,
             size,
-            mode,
+            mode: mode.bits(),
             path: path_buf,
         })
     }
@@ -154,7 +154,7 @@ pub(crate) fn copy_and_hash<R: Read, W: Write>(
 mod test {
     use std::path::Path;
 
-    use pkgar_core::Entry;
+    use pkgar_core::{Entry, Mode};
 
     use crate::{ext::EntryExt, Error};
 
@@ -164,7 +164,7 @@ mod test {
 
         let hash = blake3::hash(ENTRY_DATA.as_bytes());
 
-        let entry = Entry::new(hash, 0, ENTRY_DATA.len() as u64, 0o777, Path::new("/some/filepath"))?;
+        let entry = Entry::new(hash, 0, ENTRY_DATA.len() as u64, Mode::PERM, Path::new("/some/filepath"))?;
 
         entry.verify(hash, ENTRY_DATA.len() as u64)
     }

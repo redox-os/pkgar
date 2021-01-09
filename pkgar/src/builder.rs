@@ -1,41 +1,40 @@
-use std::fs::OpenOptions;
+use std::fs::{self, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 use blake3::Hasher;
 use error_chain::bail;
-use pkgar_core::{Entry, ENTRY_SIZE, Header, HEADER_SIZE};
+use pkgar_core::{Entry, ENTRY_SIZE, Header, HEADER_SIZE, Mode};
 use pkgar_keys::SecretKeyFile;
 use sodiumoxide::crypto::sign;
 
 use crate::{Error, READ_WRITE_HASH_BUF_SIZE, ResultExt};
 use crate::ext::{copy_and_hash, EntryExt};
 
-enum BuilderEntry {
+//TODO: Validate paths on construction
+struct BuilderEntry {
+    /// Target path for archive entry
+    target: PathBuf,
+    mode: Mode,
+    
+    kind: BuilderEntryKind,
+}
+
+enum BuilderEntryKind {
     File {
         /// Path to regular file during build
         source: PathBuf,
-        /// Target path for archive entry
-        target: PathBuf,
-        
-        mode: u32,
     },
     
     Reader {
         source: Box<dyn Read>,
-        target: PathBuf,
-        mode: u32,
     },
     
     Symlink {
-        /// Traget path for archive entry
-        target: PathBuf,
         /// Link contents
         link: PathBuf,
-        
-        mode: u32,
     },
     
     /// An entry that has already been written to the data segment
@@ -45,11 +44,17 @@ enum BuilderEntry {
 /// Builder pattern for constructing pkgar archives. Holds a list of entries
 /// and consumes itself to construct an archive.
 ///
+/// [`PackageBuilder::file`], [`PackageBuilder::symlink`], and
+/// [`PackageBuilder::file_reader`] all take a `target` and `mode`
+/// parameter. `target` is the **relative** path that will be stored in the
+/// archive (the builder will fail on write if this path is invalid), and
+/// `mode` is a Unix mode.
+///
 /// # Example
 /// ```
 /// use std::io::Cursor;
 ///
-/// use pkgar_core::{PackageBuf, PackageSrc};
+/// use pkgar_core::{Mode, PackageBuf, PackageSrc};
 /// use pkgar_keys::SecretKeyFile;
 /// use pkgar::PackageBuilder;
 ///
@@ -59,9 +64,18 @@ enum BuilderEntry {
 /// let mut archive_dest = Cursor::new(Vec::new());
 ///
 /// let mut builder = PackageBuilder::new(skey);
-/// builder.file_reader(&b"some file contents"[..], "/path/to/unpack/to", 0o600);
-/// builder.symlink("/path/to/unpack/2", "/path/to/link/to", 0o644);
-/// builder.file_reader(&b"sorta hidden file contents"[..], "/path/to/link/to", 0o644);
+/// builder.file_reader(
+///     &b"some file contents"[..],
+///     "path/to/unpack/to",
+///     Mode::from_bits(0o600).unwrap());
+/// builder.symlink(
+///     "path/to/unpack/2",
+///     "path/to/link/to",
+///     Mode::from_bits(0o644).unwrap());
+/// builder.file_reader(
+///     &b"sorta hidden file contents"[..],
+///     "path/to/link/to",
+///     Mode::from_bits(0o644).unwrap());
 /// builder.write_archive(&mut archive_dest)
 ///     .unwrap();
 ///
@@ -74,7 +88,7 @@ enum BuilderEntry {
 ///     .into_iter()
 ///     .find(|entry| entry.mode == 0o600 )
 ///     .unwrap();
-/// assert_eq!(b"/path/to/unpack/to", entry.path_bytes());
+/// assert_eq!(b"path/to/unpack/to", entry.path_bytes());
 /// ```
 pub struct PackageBuilder {
     keys: SecretKeyFile,
@@ -91,55 +105,126 @@ impl PackageBuilder {
     }
     
     /// Add a regular file to this builder. `source` is the position of the
-    /// file on the build system, while `target` is the file path used when
-    /// extracting the archive.
+    /// file on the build system.
     pub fn file(
         &mut self,
         source: impl AsRef<Path>,
         target: impl AsRef<Path>,
-        mode: u32,
+        mode: Mode,
     ) {
         self.entries.push(
-            BuilderEntry::File {
-                source: source.as_ref().to_path_buf(),
+            BuilderEntry {
                 target: target.as_ref().to_path_buf(),
                 mode,
+                kind: BuilderEntryKind::File {
+                    source: source.as_ref().to_path_buf(),
+                },
             }
         );
     }
     
-    /// Add a symlink to this builder. `target` is the file path of the link
-    /// when extracting the archive, and `link` is the contents of the link.
+    /// Add a symlink to this builder. `link` is the contents of the link.
     pub fn symlink(
         &mut self,
         target: impl AsRef<Path>,
         link: impl AsRef<Path>,
-        mode: u32,
+        mode: Mode,
     ) {
         self.entries.push(
-            BuilderEntry::Symlink {
+            BuilderEntry {
                 target: target.as_ref().to_path_buf(),
-                link: link.as_ref().to_path_buf(),
                 mode,
+                kind: BuilderEntryKind::Symlink {
+                    link: link.as_ref().to_path_buf(),
+                },
             }
         );
     }
     
-    /// Much the same as [`PackageBuilder::file`], except stores a Reader
-    /// instead of a file path.
+    /// Add a file to this builder. `source` is a Reader to read the entry's
+    /// data from.
     pub fn file_reader(
         &mut self,
         source: impl Read + 'static,
         target: impl AsRef<Path>,
-        mode: u32,
+        mode: Mode,
     ) {
         self.entries.push(
-            BuilderEntry::Reader {
-                source: Box::new(source),
+            BuilderEntry {
                 target: target.as_ref().to_path_buf(),
                 mode,
+                kind: BuilderEntryKind::Reader {
+                    source: Box::new(source),
+                },
             }
         );
+    }
+    
+    /// Iterate a directory and replicate its relative structure in this
+    /// builder by adding entries for all files and symlinks.
+    ///
+    pub fn dir(&mut self, dir: impl AsRef<Path>) -> Result<(), Error> {
+        let dir = dir.as_ref();
+        self.add_dir_entries(&dir, &dir)
+            .chain_err(|| format!("Failed to walk directory: {}", dir.display()) )
+    }
+    
+    /// Recursive helper to walk directory and yield `BuilderEntry` to
+    /// `self.entries`
+    fn add_dir_entries(
+        &mut self,
+        base: &Path,
+        current: &Path
+    ) -> Result<(), Error> {
+        let read_dir = fs::read_dir(current)
+            .chain_err(|| current )?;
+        
+        for entry_result in read_dir{
+            let entry = entry_result?;
+            let path = entry.path();
+            let metadata = entry.metadata()
+                .chain_err(|| path.as_path() )?;
+            let file_type = metadata.file_type();
+            let file_mode = metadata.permissions()
+                .mode();
+            
+            if file_type.is_dir() {
+                self.add_dir_entries(base, &path)?;
+            } else {
+                let target = path.strip_prefix(base)
+                    // This shouldn't be reachable
+                    .expect(&format!(
+                        "base ({}) was not found in path ({})",
+                        base.display(), path.display()
+                    ))
+                    .to_path_buf();
+                let permissions = Mode::perms_from(file_mode);
+                
+                if file_type.is_file() {
+                    self.entries.push(
+                        BuilderEntry {
+                            target,
+                            mode: permissions | Mode::FILE,
+                            kind: BuilderEntryKind::File {
+                                source: path,
+                            },
+                        });
+                } else if file_type.is_symlink() {
+                    self.entries.push(
+                        BuilderEntry {
+                            target,
+                            mode: permissions | Mode::SYMLINK,
+                            kind: BuilderEntryKind::Symlink {
+                                link: fs::read_link(&path)
+                                    .chain_err(|| path.as_path() )?,
+                            },
+                        });
+                } else {
+                    unreachable!();
+                }
+            }
+        }
+        Ok(())
     }
     
     /// Consume this `PackageBuilder`, writing the head and data segments to
@@ -174,6 +259,10 @@ impl PackageBuilder {
     }
     
     //WARN: Don't call this when the user can get mutable access again
+    // Also don't call it before write_data has been called.
+    // TODOS from jackpot51's implementation:
+    // - fallocate data_offset + data_size
+    // - ensure file size matches
     fn write_head<W>(&self, writer: &mut W) -> Result<u64, Error>
         where W: Write + Seek,
     {
@@ -186,10 +275,10 @@ impl PackageBuilder {
         writer.seek(SeekFrom::Start(HEADER_SIZE as u64))?;
         
         for entry in self.entries.iter() {
-            match entry {
-                BuilderEntry::Written(entry) => {
+            match entry.kind {
+                BuilderEntryKind::Written(entry) => {
                     let entry_bytes = unsafe {
-                        plain::as_bytes(entry)
+                        plain::as_bytes(&entry)
                     };
                     
                     hasher.update(entry_bytes);
@@ -225,50 +314,50 @@ impl PackageBuilder {
     
     /// Assumes `writer` starts at position 0 when calculating offsets.
     /// Returns the total length of the data segment.
+    //WARN: Don't call this when the user can get mutable access again
     fn write_data(&mut self, mut writer: &mut impl Write) -> Result<u64, Error> {
-        let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
-        let mut offset = 0;
+        // Sort the entires by target path (prevents collisions between file
+        // names causing possible indeterminism).
+        // This is done to make the build deterministic: the same inputs should
+        // result in _exactly_ the same archive every time.
+        self.entries.sort_by(|a, b| a.target.cmp(&b.target) );
         
-        for entry in self.entries.iter_mut() {
-            //TODO: Check Modes
-            //TODO: Refactor to reduce duplication
-            *entry = match entry {
-                BuilderEntry::File { source, target, mode } => {
+        let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
+        let mut written = 0;
+        
+        for builder_entry in self.entries.iter_mut() {
+            let (size, hash) = match &mut builder_entry.kind {
+                BuilderEntryKind::File { source } => {
                     let source_file = OpenOptions::new()
                         .read(true)
                         .custom_flags(libc::O_NOFOLLOW)
                         .open(&source)
                         .chain_err(|| source.as_path() )?;
                     
-                    let (size, hash) = copy_and_hash(source_file, &mut writer, &mut buf)
-                        .chain_err(|| source.as_path() )?;
-                    
-                    let entry = Entry::new(hash, offset, size, *mode, target)?;
-                    offset += entry.size;
-                    
-                    BuilderEntry::Written(entry)
+                    copy_and_hash(source_file, &mut writer, &mut buf)
+                        .chain_err(|| source.as_path() )?
                 },
-                BuilderEntry::Reader { source, target, mode } => {
-                    let (size, hash) = copy_and_hash(source, &mut writer, &mut buf)?;
-                    
-                    let entry = Entry::new(hash, offset, size, *mode, target)?;
-                    offset += entry.size;
-                    
-                    BuilderEntry::Written(entry)
+                BuilderEntryKind::Reader { source } => {
+                    copy_and_hash(source, &mut writer, &mut buf)?
                 },
-                BuilderEntry::Symlink { target, link, mode } => {
+                BuilderEntryKind::Symlink { link } => {
                     let link_bytes = link.as_os_str().as_bytes();
-                    let (size, hash) = copy_and_hash(link_bytes, &mut writer, &mut buf)?;
-                    
-                    let entry = Entry::new(hash, offset, size, *mode, target)?;
-                    offset += entry.size;
-                    
-                    BuilderEntry::Written(entry)
+                    copy_and_hash(link_bytes, &mut writer, &mut buf)?
                 },
-                BuilderEntry::Written(_) => panic!("write_data shouldn't reach written"),
+                BuilderEntryKind::Written(_) => panic!("write_data shouldn't reach written"),
             };
+            
+            let entry = Entry::new(
+                hash, written, size,
+                builder_entry.mode, &builder_entry.target
+            )?;
+            // Non-relative paths are invalid
+            entry.check_path()?;
+            
+            builder_entry.kind = BuilderEntryKind::Written(entry);
+            written += size;
         }
-        Ok(offset)
+        Ok(written)
     }
 }
 

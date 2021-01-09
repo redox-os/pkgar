@@ -24,17 +24,25 @@ bitflags! {
     pub struct Mode: u32 {
         const PERM = 0o007777;
         const KIND = 0o170000;
+
         const FILE = 0o100000;
         const SYMLINK = 0o120000;
     }
 }
 
 impl Mode {
+    /// Create a `Mode` with only the permissions bits set from a Unix file
+    /// mode.
+    pub fn perms_from(mode: u32) -> Mode {
+        Mode::from_bits_truncate(mode)
+            .perm()
+    }
+
     /// Only any kind bits
     pub fn kind(self) -> Mode {
         self & Mode::KIND
     }
-    
+
     /// Only any permissions bits
     pub fn perm(self) -> Mode {
         self & Mode::PERM
