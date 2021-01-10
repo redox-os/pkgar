@@ -54,18 +54,7 @@ impl EntryExt for Entry {
     /// non-normal components.
     fn check_path(&self) -> Result<&Path, Error> {
         let path = Path::new(OsStr::from_bytes(self.path_bytes()));
-        for component in path.components() {
-            match component {
-                Component::Normal(_) => {},
-                invalid => {
-                    let bad_component: &Path = invalid.as_ref();
-                    return Err(Error::from_kind(
-                            ErrorKind::InvalidPathComponent(bad_component.to_path_buf())
-                        ))
-                        .chain_err(|| ErrorKind::Entry(*self) );
-                },
-            }
-        }
+        check_path(&path)?;
         Ok(&path)
     }
 
@@ -150,13 +139,31 @@ pub(crate) fn copy_and_hash<R: Read, W: Write>(
     Ok((written, hasher.finalize()))
 }
 
+/// Iterate the components of a path and ensure that none are non-normal
+/// (the path is relative rather than absolute, and has no `./` or `../`
+/// elements.
+pub(crate) fn check_path(path: &Path) -> Result<(), Error> {
+    for component in path.components() {
+        match component {
+            Component::Normal(_) => {},
+            invalid => {
+                let bad_component: &Path = invalid.as_ref();
+                bail!(ErrorKind::InvalidPathComponent(bad_component.to_path_buf()));
+            },
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod test {
+    use std::io::Cursor;
     use std::path::Path;
 
     use pkgar_core::{Entry, Mode};
 
-    use crate::{ext::EntryExt, Error};
+    use crate::{Error, READ_WRITE_HASH_BUF_SIZE};
+    use crate::ext::{check_path, copy_and_hash, EntryExt};
 
     #[test]
     fn entry_constructor() -> Result<(), Error> {
@@ -167,6 +174,31 @@ mod test {
         let entry = Entry::new(hash, 0, ENTRY_DATA.len() as u64, Mode::PERM, Path::new("/some/filepath"))?;
 
         entry.verify(hash, ENTRY_DATA.len() as u64)
+    }
+    
+    #[test]
+    fn path_check() {
+        assert!(check_path(Path::new("/absolute/paths")).is_err());
+        assert!(check_path(Path::new("trying_to_break_something/../../../..")).is_err());
+        assert!(check_path(Path::new("./test.sh")).is_err());
+        
+        check_path(Path::new("normal/relative/path"))
+            .expect("Normal paths should pass");
+    }
+    
+    #[test]
+    fn copy_check() -> Result<(), Error> {
+        //TODO: Copy a buffer that requires multiple iterations of copy/hash
+        const SOME_DATA: &str = "here's a buffer to copy and hash";
+        
+        let mut dest = Cursor::new(Vec::new());
+        let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
+        let (size, hash) = copy_and_hash(SOME_DATA.as_bytes(), &mut dest, &mut buf)?;
+        
+        assert_eq!(size, SOME_DATA.len() as u64);
+        assert_eq!(hash, blake3::hash(SOME_DATA.as_bytes()));
+        assert_eq!(dest.into_inner(), SOME_DATA.as_bytes());
+        Ok(())
     }
 }
 

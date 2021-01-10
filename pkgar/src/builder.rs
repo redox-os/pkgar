@@ -11,9 +11,8 @@ use pkgar_keys::SecretKeyFile;
 use sodiumoxide::crypto::sign;
 
 use crate::{Error, READ_WRITE_HASH_BUF_SIZE, ResultExt};
-use crate::ext::{copy_and_hash, EntryExt};
+use crate::ext::{check_path, copy_and_hash, EntryExt};
 
-//TODO: Validate paths on construction
 struct BuilderEntry {
     /// Target path for archive entry
     target: PathBuf,
@@ -22,20 +21,43 @@ struct BuilderEntry {
     kind: BuilderEntryKind,
 }
 
+impl BuilderEntry {
+    // Verify inputs to ensure that incorrect packages are not built by mistake
+    fn new(
+        target: impl AsRef<Path>,
+        mode: Mode,
+        kind: BuilderEntryKind,
+    ) -> Result<BuilderEntry, Error> {
+        let mut entry = BuilderEntry {
+            target: target.as_ref().to_path_buf(),
+            mode: mode.perm(),
+            kind,
+        };
+        check_path(&entry.target)?;
+        
+        match entry.kind {
+            BuilderEntryKind::File(_) | BuilderEntryKind::Reader(_) => {
+                entry.mode |= Mode::FILE;
+            },
+            BuilderEntryKind::Symlink(_) => {
+                entry.mode |= Mode::SYMLINK;
+            },
+            BuilderEntryKind::Written(_) =>
+                unreachable!("Passed a BuilderEntryKind::Written to BuilderEntryKind::new"),
+        }
+        eprintln!("{0:o}: {0:?}", entry.mode);
+        Ok(entry)
+    }
+}
+
 enum BuilderEntryKind {
-    File {
-        /// Path to regular file during build
-        source: PathBuf,
-    },
+    /// Path to regular file during build
+    File(PathBuf),
     
-    Reader {
-        source: Box<dyn Read>,
-    },
+    Reader(Box<dyn Read>),
     
-    Symlink {
-        /// Link contents
-        link: PathBuf,
-    },
+    /// Link contents
+    Symlink(PathBuf),
     
     /// An entry that has already been written to the data segment
     Written(Entry),
@@ -48,13 +70,14 @@ enum BuilderEntryKind {
 /// [`PackageBuilder::file_reader`] all take a `target` and `mode`
 /// parameter. `target` is the **relative** path that will be stored in the
 /// archive (the builder will fail on write if this path is invalid), and
-/// `mode` is a Unix mode.
+/// `mode` is a Unix mode. They return `&mut self` for slightly more convenient
+/// chaining as seen in the example;
 ///
 /// # Example
 /// ```
 /// use std::io::Cursor;
 ///
-/// use pkgar_core::{Mode, PackageBuf, PackageSrc};
+/// use pkgar_core::Mode;
 /// use pkgar_keys::SecretKeyFile;
 /// use pkgar::PackageBuilder;
 ///
@@ -65,30 +88,32 @@ enum BuilderEntryKind {
 ///
 /// let mut builder = PackageBuilder::new(skey);
 /// builder.file_reader(
-///     &b"some file contents"[..],
-///     "path/to/unpack/to",
-///     Mode::from_bits(0o600).unwrap());
-/// builder.symlink(
-///     "path/to/unpack/2",
-///     "path/to/link/to",
-///     Mode::from_bits(0o644).unwrap());
-/// builder.file_reader(
-///     &b"sorta hidden file contents"[..],
-///     "path/to/link/to",
-///     Mode::from_bits(0o644).unwrap());
+///         &b"some file contents"[..],
+///         "path/to/unpack/to",
+///         Mode::from_bits_truncate(0o600)).unwrap()
+///     .symlink(
+///         "path/to/link/to",
+///         "path/to/unpack/2",
+///         Mode::from_bits_truncate(0o644)).unwrap()
+///     .file_reader(
+///         &b"sorta hidden file contents"[..],
+///         "path/to/link/to",
+///         Mode::from_bits_truncate(0o644)).unwrap();
+///
 /// builder.write_archive(&mut archive_dest)
 ///     .unwrap();
 ///
-/// let archive = archive_dest.into_inner();
+/// # use pkgar_core::{PackageBuf, PackageSrc};
+/// # let archive = archive_dest.into_inner();
 ///
-/// let mut src = pkgar_core::PackageBuf::new(&archive, &pkey.pkey)
-///     .unwrap();
-/// let entry = src.read_entries()
-///     .unwrap()
-///     .into_iter()
-///     .find(|entry| entry.mode == 0o600 )
-///     .unwrap();
-/// assert_eq!(b"path/to/unpack/to", entry.path_bytes());
+/// # let mut src = PackageBuf::new(&archive, &pkey.pkey)
+/// #    .unwrap();
+/// # let entry = src.read_entries()
+/// #    .unwrap()
+/// #    .into_iter()
+/// #    .find(|entry| entry.mode().unwrap().perm() == Mode::from_bits(0o600).unwrap() )
+/// #    .unwrap();
+/// # assert_eq!(b"path/to/unpack/to", entry.path_bytes());
 /// ```
 pub struct PackageBuilder {
     keys: SecretKeyFile,
@@ -111,34 +136,30 @@ impl PackageBuilder {
         source: impl AsRef<Path>,
         target: impl AsRef<Path>,
         mode: Mode,
-    ) {
+    ) -> Result<&mut PackageBuilder, Error> {
         self.entries.push(
-            BuilderEntry {
-                target: target.as_ref().to_path_buf(),
-                mode,
-                kind: BuilderEntryKind::File {
-                    source: source.as_ref().to_path_buf(),
-                },
-            }
+            BuilderEntry::new(
+                target, mode,
+                BuilderEntryKind::File(source.as_ref().to_path_buf()),
+            )?
         );
+        Ok(self)
     }
     
     /// Add a symlink to this builder. `link` is the contents of the link.
     pub fn symlink(
         &mut self,
-        target: impl AsRef<Path>,
         link: impl AsRef<Path>,
+        target: impl AsRef<Path>,
         mode: Mode,
-    ) {
+    ) -> Result<&mut PackageBuilder, Error> {
         self.entries.push(
-            BuilderEntry {
-                target: target.as_ref().to_path_buf(),
-                mode,
-                kind: BuilderEntryKind::Symlink {
-                    link: link.as_ref().to_path_buf(),
-                },
-            }
+            BuilderEntry::new(
+                target, mode,
+                BuilderEntryKind::Symlink(link.as_ref().to_path_buf()),
+            )?
         );
+        Ok(self)
     }
     
     /// Add a file to this builder. `source` is a Reader to read the entry's
@@ -148,25 +169,24 @@ impl PackageBuilder {
         source: impl Read + 'static,
         target: impl AsRef<Path>,
         mode: Mode,
-    ) {
+    ) -> Result<&mut PackageBuilder, Error> {
         self.entries.push(
-            BuilderEntry {
-                target: target.as_ref().to_path_buf(),
-                mode,
-                kind: BuilderEntryKind::Reader {
-                    source: Box::new(source),
-                },
-            }
+            BuilderEntry::new(
+                target, mode,
+                BuilderEntryKind::Reader(Box::new(source)),
+            )?
         );
+        Ok(self)
     }
     
     /// Iterate a directory and replicate its relative structure in this
     /// builder by adding entries for all files and symlinks.
     ///
-    pub fn dir(&mut self, dir: impl AsRef<Path>) -> Result<(), Error> {
+    pub fn dir(&mut self, dir: impl AsRef<Path>) -> Result<&mut PackageBuilder, Error> {
         let dir = dir.as_ref();
         self.add_dir_entries(&dir, &dir)
-            .chain_err(|| format!("Failed to walk directory: {}", dir.display()) )
+            .chain_err(|| format!("Failed to walk directory: {}", dir.display()) )?;
+        Ok(self)
     }
     
     /// Recursive helper to walk directory and yield `BuilderEntry` to
@@ -198,27 +218,24 @@ impl PackageBuilder {
                         base.display(), path.display()
                     ))
                     .to_path_buf();
-                let permissions = Mode::perms_from(file_mode);
                 
                 if file_type.is_file() {
                     self.entries.push(
-                        BuilderEntry {
+                        BuilderEntry::new(
                             target,
-                            mode: permissions | Mode::FILE,
-                            kind: BuilderEntryKind::File {
-                                source: path,
-                            },
-                        });
+                            Mode::from_bits_truncate(file_mode),
+                            BuilderEntryKind::File(path)
+                        )?);
                 } else if file_type.is_symlink() {
                     self.entries.push(
-                        BuilderEntry {
+                        BuilderEntry::new(
                             target,
-                            mode: permissions | Mode::SYMLINK,
-                            kind: BuilderEntryKind::Symlink {
-                                link: fs::read_link(&path)
+                            Mode::from_bits_truncate(file_mode),
+                            BuilderEntryKind::Symlink(
+                                fs::read_link(&path)
                                     .chain_err(|| path.as_path() )?,
-                            },
-                        });
+                            ),
+                        )?);
                 } else {
                     unreachable!();
                 }
@@ -327,21 +344,21 @@ impl PackageBuilder {
         
         for builder_entry in self.entries.iter_mut() {
             let (size, hash) = match &mut builder_entry.kind {
-                BuilderEntryKind::File { source } => {
+                BuilderEntryKind::File(source_path) => {
                     let source_file = OpenOptions::new()
                         .read(true)
                         .custom_flags(libc::O_NOFOLLOW)
-                        .open(&source)
-                        .chain_err(|| source.as_path() )?;
+                        .open(&source_path)
+                        .chain_err(|| source_path.as_path() )?;
                     
                     copy_and_hash(source_file, &mut writer, &mut buf)
-                        .chain_err(|| source.as_path() )?
+                        .chain_err(|| source_path.as_path() )?
                 },
-                BuilderEntryKind::Reader { source } => {
+                BuilderEntryKind::Reader(source) => {
                     copy_and_hash(source, &mut writer, &mut buf)?
                 },
-                BuilderEntryKind::Symlink { link } => {
-                    let link_bytes = link.as_os_str().as_bytes();
+                BuilderEntryKind::Symlink(link_contents) => {
+                    let link_bytes = link_contents.as_os_str().as_bytes();
                     copy_and_hash(link_bytes, &mut writer, &mut buf)?
                 },
                 BuilderEntryKind::Written(_) => panic!("write_data shouldn't reach written"),
