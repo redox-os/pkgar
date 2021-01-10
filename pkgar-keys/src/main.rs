@@ -1,6 +1,6 @@
 use std::io;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 
 use clap::clap_app;
@@ -13,6 +13,7 @@ use pkgar_keys::{
     ErrorKind,
     gen_keypair,
     get_skey,
+    ResultExt,
     SecretKeyFile,
     re_encrypt
 };
@@ -53,18 +54,15 @@ fn cli() -> Result<i32, Error> {
         "gen" => {
             if let Some(keydir) = skey_path.parent() {
                 fs::create_dir_all(&keydir)
-                    .map_err(|err| Error {
-                        path: keydir.to_path_buf(),
-                        src: ErrorKind::Io(err),
-                    })?;
+                    .chain_err(|| keydir )?;
             }
             
             if ! submatches.is_present("force") {
                 if skey_path.exists() {
-                    return Err(Error {
-                        path: skey_path,
-                        src: ErrorKind::Io(io::Error::from(io::ErrorKind::AlreadyExists)),
-                    });
+                    return Err(Error::from_kind(ErrorKind::Io(
+                            io::Error::from(io::ErrorKind::AlreadyExists)
+                        )))
+                        .chain_err(|| &skey_path );
                 }
             }
             
@@ -89,10 +87,7 @@ fn cli() -> Result<i32, Error> {
                 pkey.save(file)?;
             } else {
                 pkey.write(io::stdout().lock())
-                    .map_err(|src| Error {
-                        path: PathBuf::from("stdout"),
-                        src,
-                    })?;
+                    .chain_err(|| Path::new("stdout") )?;
             }
         },
         "rencrypt" => {

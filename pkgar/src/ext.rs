@@ -7,7 +7,7 @@ use std::path::{Component, Path};
 use blake3::{Hash, Hasher};
 use pkgar_core::{Entry, PackageSrc};
 
-use crate::{Error, ErrorKind};
+use crate::{Error, ErrorKind, ResultExt};
 
 /// Handy associated functions for `pkgar_core::Entry` that depend on std
 pub trait EntryExt {
@@ -26,10 +26,10 @@ impl EntryExt for Entry {
                 Component::Normal(_) => {},
                 invalid => {
                     let bad_component: &Path = invalid.as_ref();
-                    return Err(ErrorKind::InvalidPathComponent(bad_component.to_path_buf())
-                        .as_error()
-                        .entry(*self)
-                    );
+                    return Err(Error::from_kind(
+                            ErrorKind::InvalidPathComponent(bad_component.to_path_buf())
+                        ))
+                        .chain_err(|| ErrorKind::Entry(*self) );
                 },
             }
         }
@@ -38,13 +38,8 @@ impl EntryExt for Entry {
     
     fn verify(&self, blake3: Hash, size: u64) -> Result<(), Error> {
         if size != self.size() {
-            Err(ErrorKind::LengthMismatch {
-                    actual: size,
-                    expected: self.size(),
-                }
-                .as_error()
-                .entry(*self)
-            )
+            Err(Error::from_kind(ErrorKind::LengthMismatch(size, self.size())))
+                .chain_err(|| ErrorKind::Entry(*self) )
         } else if blake3 != self.blake3() {
             Err(pkgar_core::Error::InvalidBlake3.into())
         } else {
@@ -72,7 +67,6 @@ pub trait PackageSrcExt
 
 /// A reader that provides acess to one entry's data within a `PackageSrc`.
 /// Use `PackageSrcExt::entry_reader` for construction
-//TODO: Fix the types for this
 pub struct EntryReader<'a, Src>
     where Src: PackageSrc
 {
@@ -84,12 +78,16 @@ pub struct EntryReader<'a, Src>
 impl<Src, E> Read for EntryReader<'_, Src>
     where
         Src: PackageSrc<Err = E>,
-        E: From<pkgar_core::Error> + std::error::Error + Send + Sync + 'static,
+        E: From<pkgar_core::Error> + std::error::Error,
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let count = self.src.read_entry(self.entry, self.pos, buf)
             // This is a little painful, since e is pkgar::Error...
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e) )?;
+            // However, this is likely to be a very rarely triggered error
+            // condition.
+            .map_err(|err|
+                io::Error::new(io::ErrorKind::Other, err.to_string())
+            )?;
         self.pos += count;
         Ok(count)
     }

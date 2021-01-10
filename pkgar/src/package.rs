@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use sodiumoxide::crypto::sign::PublicKey;
 use pkgar_core::{Header, HEADER_SIZE, PackageSrc};
 
-use crate::Error;
+use crate::{Error, ResultExt};
 use crate::ext::PackageSrcExt;
 
 #[derive(Debug)]
@@ -21,14 +21,15 @@ impl PackageFile {
         public_key: &PublicKey
     ) -> Result<PackageFile, Error> {
         let zeroes = [0; HEADER_SIZE];
+        let path = path.as_ref().to_path_buf();
         
         let file = OpenOptions::new()
             .read(true)
             .open(&path)
-            .map_err(|e| Error::from(e).path(&path) )?;
+            .chain_err(|| &path )?;
         
         let mut new = PackageFile {
-            path: path.as_ref().to_path_buf(),
+            path,
             src: BufReader::new(file),
             
             // Need a blank header to construct the PackageFile, since we need to
@@ -49,10 +50,8 @@ impl PackageSrc for PackageFile {
     }
     
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Err> {
-        self.src.seek(SeekFrom::Start(offset))
-            .map_err(|e| Error::from(e).path(&self.path) )?;
-        Ok(self.src.read(buf)
-           .map_err(|e| Error::from(e).path(&self.path) )?)
+        self.src.seek(SeekFrom::Start(offset))?;
+        Ok(self.src.read(buf)?)
     }
 }
 
