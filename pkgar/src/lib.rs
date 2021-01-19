@@ -57,6 +57,10 @@ error_chain! {
             display("Invalid Mode Kind: {:#o}", mode),
         }
 
+        /// Add some path context to this error. The general rule used here is
+        /// if a function has knowledge of the paths for the readers/writers
+        /// it's manipulating, then it should provide the path context for
+        /// those errors.
         Path(path: PathBuf) {
             display("Path: {}", path.display()),
         }

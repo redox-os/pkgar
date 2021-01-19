@@ -26,7 +26,8 @@ pub fn create(
         .chain_err(|| archive_path.as_ref() )?;
 
     let mut builder = PackageBuilder::new(secret_key);
-    builder.dir(folder)?;
+    builder.dir(&folder)
+        .chain_err(|| folder.as_ref() )?;
     builder.write_archive(&mut archive_file)
         .chain_err(|| archive_path.as_ref() )?;
 

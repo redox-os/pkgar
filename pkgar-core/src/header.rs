@@ -55,7 +55,7 @@ impl Header {
         self.count
     }
 
-    /// Retrieve the size of the entries
+    /// `crate::ENTRY_SIZE * self.count()`
     pub fn entries_size(&self) -> Result<u64, Error> {
         let entry_size = u64::try_from(mem::size_of::<Entry>())?;
         self.count
@@ -63,7 +63,7 @@ impl Header {
             .ok_or(Error::Overflow)
     }
 
-    /// Retrieve the size of the Header and its entries
+    /// `crate::HEADER_SIZE + self.entries_size()`
     pub fn total_size(&self) -> Result<u64, Error> {
         let header_size = u64::try_from(mem::size_of::<Header>())?;
         self.entries_size()?
@@ -84,7 +84,6 @@ impl Header {
             hasher.finalize()
         };
 
-
         if &self.blake3 != hash.as_bytes() {
             return Err(Error::InvalidBlake3);
         }
@@ -97,15 +96,4 @@ impl Header {
         Ok(plain::slice_from_bytes(data)?)
     }
 }
-/*
-impl fmt::Debug for Header {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Header {{\n\tsignature: {:?},\n\tpublic_key: {:?},\n\tblake3: {:?},count: {:?},\n}}",
-            &self.signature[..],
-            self.public_key,
-            self.blake3,
-            self.count(),
-        )
-    }
-}*/
 

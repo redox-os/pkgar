@@ -102,7 +102,7 @@ enum BuilderEntryKind {
 ///
 /// builder.write_archive(&mut archive_dest)
 ///     .unwrap();
-///
+/// #
 /// # use pkgar_core::{PackageBuf, PackageSrc};
 /// # let archive = archive_dest.into_inner();
 ///
@@ -200,7 +200,8 @@ impl PackageBuilder {
             .chain_err(|| current )?;
         
         for entry_result in read_dir{
-            let entry = entry_result?;
+            let entry = entry_result
+                .chain_err(|| current )?;
             let path = entry.path();
             let metadata = entry.metadata()
                 .chain_err(|| path.as_path() )?;
