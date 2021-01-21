@@ -9,7 +9,7 @@ use bitflags::bitflags;
 pub use crate::entry::Entry;
 pub use crate::error::Error;
 pub use crate::header::Header;
-pub use crate::package::{PackageBuf, PackageSrc};
+pub use crate::package::{PackageBuf, PackageData, PackageHead};
 
 mod entry;
 mod error;

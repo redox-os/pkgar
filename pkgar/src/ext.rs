@@ -6,7 +6,7 @@ use std::path::{Component, Path};
 
 use error_chain::bail;
 use blake3::{Hash, Hasher};
-use pkgar_core::{Entry, Mode, PackageSrc};
+use pkgar_core::{Entry, Mode, PackageData};
 
 use crate::{Error, ErrorKind, ResultExt};
 
@@ -67,12 +67,12 @@ impl EntryExt for Entry {
             Err(pkgar_core::Error::InvalidBlake3.into())
         } else {
             Ok(())
-        }.chain_err(|| ErrorKind::Entry(*self) )
+        }.chain_err(|| *self )
     }
 }
 
-pub trait PackageSrcExt
-    where Self: PackageSrc + Sized,
+pub trait PackageDataExt
+    where Self: PackageData + Sized,
 {
     /// Get the path corresponding to this `PackageSrc`. This will likely be
     /// refactored to use something more generic than `Path` in future.
@@ -91,7 +91,7 @@ pub trait PackageSrcExt
 /// A reader that provides acess to one entry's data within a `PackageSrc`.
 /// Use `PackageSrcExt::entry_reader` for construction
 pub struct EntryReader<'a, Src>
-    where Src: PackageSrc
+    where Src: PackageData
 {
     src: &'a mut Src,
     entry: Entry,
@@ -100,7 +100,7 @@ pub struct EntryReader<'a, Src>
 
 impl<Src, E> Read for EntryReader<'_, Src>
     where
-        Src: PackageSrc<Err = E>,
+        Src: PackageData<Err = E>,
         E: From<pkgar_core::Error> + std::error::Error,
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {

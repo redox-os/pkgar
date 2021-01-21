@@ -2,7 +2,7 @@ use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::Path;
 
-use pkgar_core::PackageSrc;
+use pkgar_core::PackageHead;
 use pkgar_keys::PublicKeyFile;
 
 use crate::{Error, READ_WRITE_HASH_BUF_SIZE, ResultExt};
@@ -41,9 +41,11 @@ pub fn extract(
 ) -> Result<(), Error> {
     let pkey = PublicKeyFile::open(&pkey_path.as_ref())?.pkey;
 
-    let mut package = PackageFile::new(archive_path, &pkey)?;
+    //REMOVE: Very temporary
+    let head = PackageFile::new(&archive_path, &pkey)?;
+    let mut pkg = PackageFile::new(archive_path, &pkey)?;
 
-    Transaction::install(&mut package, base_dir)?
+    Transaction::install(&head, &mut pkg, base_dir)?
         .commit()?;
 
     Ok(())
@@ -70,8 +72,8 @@ pub fn list(
 ) -> Result<(), Error> {
     let pkey = PublicKeyFile::open(&pkey_path.as_ref())?.pkey;
 
-    let mut package = PackageFile::new(archive_path, &pkey)?;
-    for entry in package.read_entries()? {
+    let package = PackageFile::new(archive_path, &pkey)?;
+    for entry in package.entries() {
         let relative = entry.check_path()?;
         println!("{}", relative.display());
     }
@@ -86,10 +88,10 @@ pub fn verify(
 ) -> Result<(), Error> {
     let pkey = PublicKeyFile::open(pkey_path)?.pkey;
 
-    let mut package = PackageFile::new(archive_path, &pkey)?;
+    let package = PackageFile::new(archive_path, &pkey)?;
 
     let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
-    for entry in package.read_entries()? {
+    for entry in package.entries() {
         let expected_path = base_dir.as_ref()
             .join(entry.check_path()?);
 

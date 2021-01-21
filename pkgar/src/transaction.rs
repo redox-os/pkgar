@@ -6,10 +6,10 @@ use std::os::unix::fs::{symlink, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 use blake3::Hash;
-use pkgar_core::{Mode, PackageSrc};
+use pkgar_core::{Mode, PackageData, PackageHead};
 
 use crate::{Error, ErrorKind, READ_WRITE_HASH_BUF_SIZE, ResultExt};
-use crate::ext::{copy_and_hash, EntryExt, PackageSrcExt};
+use crate::ext::{copy_and_hash, EntryExt, PackageDataExt};
 
 fn file_exists(path: impl AsRef<Path>) -> Result<bool, Error> {
     if let Err(err) = fs::metadata(&path) {
@@ -83,20 +83,22 @@ pub struct Transaction {
 }
 
 impl Transaction {
-    pub fn install<Pkg>(
-        src: &mut Pkg,
-        base_dir: impl AsRef<Path>
+    pub fn install<PkgHead, PkgData>(
+        head: &PkgHead,
+        data: &mut PkgData,
+        base_dir: impl AsRef<Path>,
     ) -> Result<Transaction, Error>
-        where Pkg: PackageSrc<Err = Error> + PackageSrcExt,
+        where PkgHead: PackageHead,
+            PkgData: PackageData<Err = Error> + PackageDataExt,
     {
         let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
         
-        let entries = src.read_entries()?;
-        let mut actions = Vec::with_capacity(entries.len());
+        let mut actions = Vec::with_capacity(head.header().count() as usize);
         
-        for entry in entries {
+        for entry in head.entries().cloned() {
+            //TODO: Path context for invalid entry data
             let relative_path = entry.check_path()
-                .chain_err(|| src.path() )?;
+                .chain_err(|| entry )?;
             
             let target_path = base_dir.as_ref().join(relative_path);
             //HELP: Under what circumstances could this ever fail?
@@ -107,8 +109,7 @@ impl Transaction {
             
             let mode = entry.mode()
                 .map_err(Error::from)
-                .chain_err(|| src.path() )
-                .chain_err(|| ErrorKind::Entry(entry) )?;
+                .chain_err(|| entry )?;
             
             let (entry_data_size, entry_data_hash) = match mode.kind() {
                 Mode::FILE => {
@@ -121,17 +122,17 @@ impl Transaction {
                         .open(&tmp_path)
                         .chain_err(|| tmp_path.as_path() )?;
                     
-                    copy_and_hash(src.entry_reader(entry), &mut tmp_file, &mut buf)
+                    copy_and_hash(data.entry_reader(entry), &mut tmp_file, &mut buf)
                         .chain_err(|| &tmp_path )
                         .chain_err(|| format!("Copying entry to tempfile: '{}'", relative_path.display()) )?
                 },
                 Mode::SYMLINK => {
-                    let mut data = Vec::new();
-                    let (size, hash) = copy_and_hash(src.entry_reader(entry), &mut data, &mut buf)
+                    let mut sym_target_bytes = Vec::new();
+                    let (size, hash) = copy_and_hash(data.entry_reader(entry), &mut sym_target_bytes, &mut buf)
                         .chain_err(|| &tmp_path )
                         .chain_err(|| format!("Copying entry to tempfile: '{}'", relative_path.display()) )?;
                     
-                    let sym_target = Path::new(OsStr::from_bytes(&data));
+                    let sym_target = Path::new(OsStr::from_bytes(&sym_target_bytes));
                     symlink(sym_target, &tmp_path)
                         .chain_err(|| sym_target )
                         .chain_err(|| format!("Symlinking to {}", tmp_path.display()) )?;
@@ -141,13 +142,12 @@ impl Transaction {
                     return Err(Error::from(
                             pkgar_core::Error::InvalidMode(mode.bits())
                         ))
-                        .chain_err(|| ErrorKind::Entry(entry) )
-                        .chain_err(|| src.path() );
+                        .chain_err(|| entry );
                 }
             };
             
             entry.verify(entry_data_hash, entry_data_size)
-                .chain_err(|| src.path() )?;
+                .chain_err(|| data.path() )?;
             
             actions.push(Action::Rename(tmp_path, target_path))
         }
@@ -156,19 +156,18 @@ impl Transaction {
         })
     }
     
-    pub fn replace<Pkg>(
-        old: &mut Pkg,
-        new: &mut Pkg,
+    pub fn replace<PkgHead, PkgData>(
+        old: &PkgHead,
+        head: &PkgHead,
+        data: &mut PkgData,
         base_dir: impl AsRef<Path>,
     ) -> Result<Transaction, Error>
-        where Pkg: PackageSrc<Err = Error> + PackageSrcExt,
+        where PkgHead: PackageHead,
+            PkgData: PackageData<Err = Error> + PackageDataExt,
     {
-        let old_entries = old.read_entries()?;
-        let new_entries = new.read_entries()?;
-        
         // All the files that are present in old but not in new
-        let mut actions = old_entries.iter()
-            .filter(|old_e| new_entries.iter()
+        let mut actions = old.entries()
+            .filter(|old_e| head.entries()
                 .find(|new_e| new_e.blake3() == old_e.blake3() )
                 .is_none())
             .map(|e| {
@@ -178,24 +177,20 @@ impl Transaction {
             })
             .collect::<Result<Vec<Action>, Error>>()?;
         
-        //TODO: Don't force a re-read of all the entries for the new package
-        let mut trans = Transaction::install(new, base_dir)?;
+        let mut trans = Transaction::install(head, data, base_dir)?;
         trans.actions.append(&mut actions);
         Ok(trans)
     }
     
-    pub fn remove<Pkg>(
-        pkg: &mut Pkg,
-        base_dir: impl AsRef<Path>
-    ) -> Result<Transaction, Error>
-        where Pkg: PackageSrc<Err = Error>,
-    {
+    pub fn remove(
+        pkg: &mut impl PackageHead,
+        base_dir: impl AsRef<Path>,
+    ) -> Result<Transaction, Error> {
         let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
         
-        let entries = pkg.read_entries()?;
-        let mut actions = Vec::with_capacity(entries.len());
+        let mut actions = Vec::with_capacity(pkg.header().count() as usize);
         
-        for entry in entries {
+        for entry in pkg.entries() {
             let relative_path = entry.check_path()?;
             
             let target_path = base_dir.as_ref()

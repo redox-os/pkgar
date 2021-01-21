@@ -57,6 +57,10 @@ error_chain! {
             display("Invalid Mode Kind: {:#o}", mode),
         }
 
+        PackageHeadTooShort {
+            display("Couldn't read package head: too short"),
+        }
+
         /// Add some path context to this error. The general rule used here is
         /// if a function has knowledge of the paths for the readers/writers
         /// it's manipulating, then it should provide the path context for
@@ -87,6 +91,12 @@ impl From<&Path> for ErrorKind {
 impl From<&PathBuf> for ErrorKind {
     fn from(path: &PathBuf) -> ErrorKind {
         ErrorKind::Path(path.clone())
+    }
+}
+
+impl From<Entry> for ErrorKind {
+    fn from(entry: Entry) -> ErrorKind {
+        ErrorKind::Entry(entry)
     }
 }
 

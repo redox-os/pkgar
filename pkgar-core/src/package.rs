@@ -1,43 +1,31 @@
-use alloc::vec;
-use alloc::vec::Vec;
 use core::convert::TryFrom;
+use core::slice::Iter;
 
 use sodiumoxide::crypto::sign::PublicKey;
 
-use crate::{Entry, Error, HEADER_SIZE, Header};
+use crate::{Entry, Error, Header};
 
-pub trait PackageSrc {
-    type Err: From<Error>;
-    
-    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Err>;
-    
+/// The head segment of an archive.
+pub trait PackageHead {
     fn header(&self) -> Header;
     
-    /// Users of implementors of `PackageSrc` should use `header` instead of `read_header` for
-    /// header access.
-    /// Implementors of `PackageSrc` should call this function during initialization and store
-    /// the result to pass out with `header`.
-    fn read_header(&mut self, public_key: &PublicKey) -> Result<Header, Self::Err> {
-        let mut header_data = [0; HEADER_SIZE];
-        self.read_at(0, &mut header_data)?;
-        let header = Header::new(&header_data, &public_key)?;
-        Ok(header.clone())
-    }
+    fn entries(&self) -> Iter<'_, Entry>;
+}
+
+/// The data segment of an archive.
+pub trait PackageData {
+    type Err: From<Error>;
     
-    fn read_entries(&mut self) -> Result<Vec<Entry>, Self::Err> {
-        let header = self.header();
-        let entries_size = header.entries_size()
-            .and_then(|rslt| usize::try_from(rslt)
-                .map_err(Error::TryFromInt)
-            )?;
-        let mut entries_data = vec![0; entries_size];
-        self.read_at(HEADER_SIZE as u64, &mut entries_data)?;
-        let entries = header.entries(&entries_data)?;
-        Ok(entries.to_vec())
-    }
+    /// Fill `buf` from the given `offset` within the data segment
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Err>;
     
-    /// Read from this src at a given entry's data with a given offset within that entry
-    fn read_entry(&mut self, entry: Entry, offset: usize, buf: &mut [u8]) -> Result<usize, Self::Err> {
+    /// Fill `buf` from a given entry's data + `offset` within that entry
+    fn read_entry(
+        &mut self,
+        entry: Entry,
+        offset: usize,
+        buf: &mut [u8],
+    ) -> Result<usize, Self::Err> {
         if offset as u64 > entry.size {
             return Ok(0);
         }
@@ -49,43 +37,51 @@ pub trait PackageSrc {
             end = buf.len();
         }
         
-        let offset =
-            HEADER_SIZE as u64 +
-            self.header().entries_size()? +
-            entry.offset + offset as u64;
+        let offset = entry.offset + offset as u64;
         
         self.read_at(offset as u64, &mut buf[..end])
     }
 }
 
+/// A package based on a slice
 //TODO: Test this impl...
 pub struct PackageBuf<'a> {
+    // Head and data segments in a single buffer
     src: &'a [u8],
+    
     header: Header,
+    entries: &'a [Entry],
 }
 
 impl<'a> PackageBuf<'a> {
+    /// `src` must have both the head and data segments of the package
     pub fn new(src: &'a [u8], public_key: &PublicKey) -> Result<PackageBuf<'a>, Error> {
-        let zeroes = [0; HEADER_SIZE];
-        let mut new = PackageBuf {
+        let header = *Header::new(&src, &public_key)?;
+        Ok(PackageBuf {
             src,
-            header: unsafe { *Header::new_unchecked(&zeroes)? },
-        };
-        new.header = *Header::new(&new.src, &public_key)?;
-        Ok(new)
+            header,
+            entries: header.entries(&src)?,
+        })
     }
 }
 
-impl PackageSrc for PackageBuf<'_> {
-    type Err = Error;
-    
+impl PackageHead for PackageBuf<'_> {
     fn header(&self) -> Header {
         self.header
     }
     
+    fn entries(&self) -> Iter<'_, Entry> {
+        self.entries.iter()
+    }
+}
+
+impl PackageData for PackageBuf<'_> {
+    type Err = Error;
+    
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, Error> {
-        let start = usize::try_from(offset)
-            .map_err(Error::TryFromInt)?;
+        // Have to account for the head portion
+        let start = usize::try_from(offset + self.header.total_size()?)?;
+        
         let len = self.src.len();
         if start >= len {
             return Ok(0);
