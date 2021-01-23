@@ -83,19 +83,17 @@ pub struct Transaction {
 }
 
 impl Transaction {
-    pub fn install<PkgHead, PkgData>(
-        head: &PkgHead,
-        data: &mut PkgData,
+    pub fn install<Pkg>(
+        pkg: &Pkg,
         base_dir: impl AsRef<Path>,
     ) -> Result<Transaction, Error>
-        where PkgHead: PackageHead,
-            PkgData: PackageData<Err = Error> + PackageDataExt,
+        where Pkg: PackageHead + PackageData<Err = Error> + PackageDataExt,
     {
         let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
         
-        let mut actions = Vec::with_capacity(head.header().count() as usize);
+        let mut actions = Vec::with_capacity(pkg.header().count() as usize);
         
-        for entry in head.entries().cloned() {
+        for entry in pkg.entries().cloned() {
             //TODO: Path context for invalid entry data
             let relative_path = entry.check_path()
                 .chain_err(|| entry )?;
@@ -122,13 +120,13 @@ impl Transaction {
                         .open(&tmp_path)
                         .chain_err(|| tmp_path.as_path() )?;
                     
-                    copy_and_hash(data.entry_reader(entry), &mut tmp_file, &mut buf)
+                    copy_and_hash(pkg.entry_reader(entry), &mut tmp_file, &mut buf)
                         .chain_err(|| &tmp_path )
                         .chain_err(|| format!("Copying entry to tempfile: '{}'", relative_path.display()) )?
                 },
                 Mode::SYMLINK => {
                     let mut sym_target_bytes = Vec::new();
-                    let (size, hash) = copy_and_hash(data.entry_reader(entry), &mut sym_target_bytes, &mut buf)
+                    let (size, hash) = copy_and_hash(pkg.entry_reader(entry), &mut sym_target_bytes, &mut buf)
                         .chain_err(|| &tmp_path )
                         .chain_err(|| format!("Copying entry to tempfile: '{}'", relative_path.display()) )?;
                     
@@ -147,7 +145,7 @@ impl Transaction {
             };
             
             entry.verify(entry_data_hash, entry_data_size)
-                .chain_err(|| data.path() )?;
+                .chain_err(|| pkg.path() )?;
             
             actions.push(Action::Rename(tmp_path, target_path))
         }
@@ -156,18 +154,16 @@ impl Transaction {
         })
     }
     
-    pub fn replace<PkgHead, PkgData>(
-        old: &PkgHead,
-        head: &PkgHead,
-        data: &mut PkgData,
+    pub fn replace<Pkg>(
+        old: &impl PackageHead,
+        new: &Pkg,
         base_dir: impl AsRef<Path>,
     ) -> Result<Transaction, Error>
-        where PkgHead: PackageHead,
-            PkgData: PackageData<Err = Error> + PackageDataExt,
+        where Pkg: PackageHead + PackageData<Err = Error> + PackageDataExt,
     {
         // All the files that are present in old but not in new
         let mut actions = old.entries()
-            .filter(|old_e| head.entries()
+            .filter(|old_e| new.entries()
                 .find(|new_e| new_e.blake3() == old_e.blake3() )
                 .is_none())
             .map(|e| {
@@ -177,13 +173,13 @@ impl Transaction {
             })
             .collect::<Result<Vec<Action>, Error>>()?;
         
-        let mut trans = Transaction::install(head, data, base_dir)?;
+        let mut trans = Transaction::install(new, base_dir)?;
         trans.actions.append(&mut actions);
         Ok(trans)
     }
     
     pub fn remove(
-        pkg: &mut impl PackageHead,
+        pkg: &impl PackageHead,
         base_dir: impl AsRef<Path>,
     ) -> Result<Transaction, Error> {
         let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];

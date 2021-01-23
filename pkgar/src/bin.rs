@@ -41,11 +41,9 @@ pub fn extract(
 ) -> Result<(), Error> {
     let pkey = PublicKeyFile::open(&pkey_path.as_ref())?.pkey;
 
-    //REMOVE: Very temporary
-    let head = PackageFile::new(&archive_path, &pkey)?;
-    let mut pkg = PackageFile::new(archive_path, &pkey)?;
+    let pkg = PackageFile::open(archive_path, &pkey)?;
 
-    Transaction::install(&head, &mut pkg, base_dir)?
+    Transaction::install(&pkg, base_dir)?
         .commit()?;
 
     Ok(())
@@ -58,9 +56,9 @@ pub fn remove(
 ) -> Result<(), Error> {
     let pkey = PublicKeyFile::open(&pkey_path.as_ref())?.pkey;
 
-    let mut package = PackageFile::new(archive_path, &pkey)?;
+    let package = PackageFile::open(archive_path, &pkey)?;
 
-    Transaction::remove(&mut package, base_dir)?
+    Transaction::remove(&package, base_dir)?
         .commit()?;
 
     Ok(())
@@ -72,7 +70,7 @@ pub fn list(
 ) -> Result<(), Error> {
     let pkey = PublicKeyFile::open(&pkey_path.as_ref())?.pkey;
 
-    let package = PackageFile::new(archive_path, &pkey)?;
+    let package = PackageFile::open(archive_path, &pkey)?;
     for entry in package.entries() {
         let relative = entry.check_path()?;
         println!("{}", relative.display());
@@ -88,7 +86,7 @@ pub fn verify(
 ) -> Result<(), Error> {
     let pkey = PublicKeyFile::open(pkey_path)?.pkey;
 
-    let package = PackageFile::new(archive_path, &pkey)?;
+    let package = PackageFile::open(archive_path, &pkey)?;
 
     let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
     for entry in package.entries() {

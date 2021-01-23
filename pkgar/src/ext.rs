@@ -79,7 +79,7 @@ pub trait PackageDataExt
     fn path(&self) -> &Path;
 
     /// Build a reader for a given entry on this source.
-    fn entry_reader(&mut self, entry: Entry) -> EntryReader<'_, Self> {
+    fn entry_reader(&self, entry: Entry) -> EntryReader<'_, Self> {
         EntryReader {
             src: self,
             entry,
@@ -93,7 +93,7 @@ pub trait PackageDataExt
 pub struct EntryReader<'a, Src>
     where Src: PackageData
 {
-    src: &'a mut Src,
+    src: &'a Src,
     entry: Entry,
     pos: usize,
 }

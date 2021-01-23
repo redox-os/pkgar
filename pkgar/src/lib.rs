@@ -1,4 +1,5 @@
 mod bin;
+pub mod binprint;
 mod builder;
 pub mod ext;
 mod package;

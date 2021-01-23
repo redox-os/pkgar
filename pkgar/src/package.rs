@@ -1,149 +1,151 @@
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
+use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::slice::Iter;
 
-use error_chain::bail;
 use sodiumoxide::crypto::sign::PublicKey;
-use pkgar_core::{Entry, Header, HEADER_SIZE, PackageData, PackageHead};
+use pkgar_core::{Entry, Header, HEADER_SIZE, PackageData, PackageHead, segment};
 
 use crate::{Error, ErrorKind, ResultExt};
 use crate::ext::PackageDataExt;
 
-/// A `.pkgar_head` file on disk
+/// A `.pkgar` (or `.pkgar_head` or `.pkgar_data`) file on disk.
 #[derive(Debug)]
-pub struct PackageHeadFile {
-    header: Header,
-    entries: Vec<Entry>,
-}
-
-impl PackageHeadFile {
-    /// Deserialize the
-    pub fn new(
-        path: impl AsRef<Path>,
-        public_key: &PublicKey,
-    ) -> Result<PackageHeadFile, Error> {
-        let path = path.as_ref();
-
-        let mut file = File::open(&path)
-            .chain_err(|| path )?;
-
-        PackageHeadFile::from_reader(&mut file, public_key)
-            .chain_err(|| path )
-    }
-
-    fn from_reader(
-        reader: &mut impl Read,
-        public_key: &PublicKey,
-    ) -> Result<PackageHeadFile, Error> {
-        let mut header_bytes = [0; HEADER_SIZE];
-        let count = reader.read(&mut header_bytes[..])?;
-
-        if count != HEADER_SIZE {
-            bail!(ErrorKind::PackageHeadTooShort);
-        }
-
-        let header = *Header::new(&header_bytes[..], public_key)?;
-
-        let entries_size = header.entries_size()?;
-        let mut entries_bytes = Vec::with_capacity(entries_size as usize);
-        let count = reader.read(&mut entries_bytes)?;
-
-        if count != entries_size as usize {
-            bail!(ErrorKind::PackageHeadTooShort);
-        }
-
-        Ok(PackageHeadFile {
-            header,
-            entries: header.entries(&entries_bytes)?.to_vec(),
-        })
-    }
-}
-
-/// A `.pkgar_data` file on disk
-#[derive(Debug)]
-pub struct PackageDataFile {
+pub struct PackageFile<S> {
     path: PathBuf,
-
-    src: File,
-}
-
-impl PackageDataFile {
-    pub fn new(path: impl AsRef<Path>) -> Result<PackageDataFile, Error> {
-        let path = path.as_ref().to_path_buf();
-        let src = File::open(&path)
-            .chain_err(|| &path )?;
-        Ok(PackageDataFile {
-            path,
-            src,
-        })
-    }
-}
-
-impl PackageData for PackageDataFile {
-    type Err = Error;
-
-    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, Error> {
-        self.src.seek(SeekFrom::Start(offset))
-            .chain_err(|| &self.path )?;
-        Ok(self.src.read(buf)
-           .chain_err(|| &self.path )?)
-    }
-}
-
-/// A `.pkgar` file on disk (contains both head and data segments)
-#[derive(Debug)]
-pub struct PackageFile {
-    path: PathBuf,
-    
-    head: PackageHeadFile,
     file: File,
+    
+    header: Option<Header>,
+    entries: Vec<Entry>,
+    
+    _marker: PhantomData<S>,
 }
 
-impl PackageFile {
-    pub fn new(
+impl<S: segment::HeadSeg> PackageFile<S> {
+    fn open_with_head(
         path: impl AsRef<Path>,
         public_key: &PublicKey
-    ) -> Result<PackageFile, Error> {
+    ) -> Result<PackageFile<S>, Error> {
         let path = path.as_ref().to_path_buf();
         
         let mut file = File::open(&path)
             .chain_err(|| &path )?;
         
-        let head = PackageHeadFile::from_reader(&mut file, public_key)
+        let mut header_bytes = [0; HEADER_SIZE];
+        let count = file.read(&mut header_bytes[..])
             .chain_err(|| &path )?;
+
+        if count != HEADER_SIZE {
+            return Err(ErrorKind::PackageHeadTooShort)
+                .map_err(Error::from)
+                .chain_err(|| &path );
+        }
+
+        let header = *Header::new(&header_bytes[..], public_key)
+            .map_err(Error::from)
+            .chain_err(|| &path )?;
+
+        let entries_size = header.entries_size()
+            .map_err(Error::from)
+            .chain_err(|| &path )? as usize;
+        let mut entries_bytes = vec![0; entries_size];
+        let count = file.read(&mut entries_bytes)
+            .chain_err(|| &path )?;
+
+        if count != entries_size {
+            return Err(ErrorKind::PackageHeadTooShort)
+                .map_err(Error::from)
+                .chain_err(|| &path );
+        }
 
         Ok(PackageFile {
             path,
-            head,
             file,
+            
+            header: Some(header),
+            entries: header.entries(&entries_bytes)?.to_vec(),
+            
+            _marker: PhantomData,
         })
     }
 }
 
-impl PackageHead for PackageFile {
-    fn header(&self) -> Header {
-        self.head.header
-    }
-
-    fn entries(&self) -> Iter<'_, Entry> {
-        self.head.entries.iter()
+// See pkgar-core/src/package.rs for more on these
+impl PackageFile<segment::Both> {
+    /// Open a `.pkgar` file. The returned type implements both [`PackageHead`]
+    /// and [`PackageData`].
+    #[inline]
+    pub fn open(
+        path: impl AsRef<Path>,
+        pkey: &PublicKey,
+    ) -> Result<PackageFile<segment::Both>, Error> {
+        PackageFile::open_with_head(path, pkey)
     }
 }
 
-impl PackageData for PackageFile {
+impl PackageFile<segment::Head> {
+    /// Open a `.pkgar_head` file. The returned type implements
+    /// [`PackageHead`].
+    #[inline]
+    pub fn open_head(
+        path: impl AsRef<Path>,
+        pkey: &PublicKey,
+    ) -> Result<PackageFile<segment::Head>, Error> {
+        PackageFile::open_with_head(path, pkey)
+    }
+}
+
+impl PackageFile<segment::Data> {
+    /// Open a `.pkgar_data` file. The returned type implements
+    /// [`PackageData`].
+    pub fn open_data(
+        path: impl AsRef<Path>
+    ) -> Result<PackageFile<segment::Data>, Error> {
+        let path = path.as_ref().to_path_buf();
+        let file = File::open(&path)
+            .chain_err(|| &path )?;
+        Ok(PackageFile {
+            path,
+            file,
+            
+            header: None,
+            entries: vec![],
+            
+            _marker: PhantomData,
+        })
+    }
+}
+
+impl<S: segment::HeadSeg> PackageHead for PackageFile<S> {
+    fn header(&self) -> Header {
+        self.header
+            .expect("Package file with HeadSeg always has Some(header)")
+    }
+
+    fn entries(&self) -> Iter<'_, Entry> {
+        self.entries.iter()
+    }
+}
+
+impl<S: segment::DataSeg> PackageData for PackageFile<S> {
     type Err = Error;
     
-    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Err> {
-        let offset = self.head.header.total_size()? + offset;
-        self.file.seek(SeekFrom::Start(offset))
+    fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Err> {
+        let offset = self.header.map(|h| h.total_size() )
+            .transpose()?
+            .unwrap_or(0) + offset;
+        
+        // Nevermind how this works...
+        // https://stackoverflow.com/questions/31503488/why-is-it-possible-to-implement-read-on-an-immutable-reference-to-file
+        (&self.file).seek(SeekFrom::Start(offset))
             .chain_err(|| &self.path )?;
-        Ok(self.file.read(buf)
+        Ok((&self.file).read(buf)
            .chain_err(|| &self.path )?)
     }
 }
 
-impl PackageDataExt for PackageFile {
+impl<S: segment::DataSeg> PackageDataExt for PackageFile<S> {
     fn path(&self) -> &Path {
         &self.path
     }

@@ -1,3 +1,4 @@
+use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::ffi::OsStrExt;
@@ -13,6 +14,7 @@ use sodiumoxide::crypto::sign;
 use crate::{Error, READ_WRITE_HASH_BUF_SIZE, ResultExt};
 use crate::ext::{check_path, copy_and_hash, EntryExt};
 
+#[derive(Debug)]
 struct BuilderEntry {
     /// Target path for archive entry
     target: PathBuf,
@@ -45,7 +47,6 @@ impl BuilderEntry {
             BuilderEntryKind::Written(_) =>
                 unreachable!("Passed a BuilderEntryKind::Written to BuilderEntryKind::new"),
         }
-        eprintln!("{0:o}: {0:?}", entry.mode);
         Ok(entry)
     }
 }
@@ -61,6 +62,18 @@ enum BuilderEntryKind {
     
     /// An entry that has already been written to the data segment
     Written(Entry),
+}
+
+impl fmt::Debug for BuilderEntryKind {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use BuilderEntryKind::*;
+        write!(f, "BuilderEntryKind::{}", match self {
+            File(p) => format!("File({:?})", p),
+            Reader(_) => String::from("Reader(_)"),
+            Symlink(p) => format!("Symlink({:?})", p),
+            Written(e) => format!("Written({:?})", e),
+        })
+    }
 }
 
 /// Builder pattern for constructing pkgar archives. Holds a list of entries
@@ -103,14 +116,12 @@ enum BuilderEntryKind {
 /// builder.write_archive(&mut archive_dest)
 ///     .unwrap();
 /// #
-/// # use pkgar_core::{PackageBuf, PackageSrc};
+/// # use pkgar_core::{PackageBuf, PackageHead};
 /// # let archive = archive_dest.into_inner();
 ///
 /// # let mut src = PackageBuf::new(&archive, &pkey.pkey)
 /// #    .unwrap();
-/// # let entry = src.read_entries()
-/// #    .unwrap()
-/// #    .into_iter()
+/// # let entry = src.entries()
 /// #    .find(|entry| entry.mode().unwrap().perm() == Mode::from_bits(0o600).unwrap() )
 /// #    .unwrap();
 /// # assert_eq!(b"path/to/unpack/to", entry.path_bytes());
@@ -181,7 +192,6 @@ impl PackageBuilder {
     
     /// Iterate a directory and replicate its relative structure in this
     /// builder by adding entries for all files and symlinks.
-    ///
     pub fn dir(&mut self, dir: impl AsRef<Path>) -> Result<&mut PackageBuilder, Error> {
         let dir = dir.as_ref();
         self.add_dir_entries(&dir, &dir)
@@ -379,3 +389,10 @@ impl PackageBuilder {
     }
 }
 
+impl fmt::Debug for PackageBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("PackageBuilder")
+            .field("entries", &self.entries)
+            .finish()
+    }
+}
