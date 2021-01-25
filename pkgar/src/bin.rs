@@ -2,14 +2,18 @@ use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::Path;
 
-use pkgar_core::PackageHead;
-use pkgar_keys::PublicKeyFile;
-
-use crate::{Error, READ_WRITE_HASH_BUF_SIZE, ResultExt};
-use crate::builder::PackageBuilder;
-use crate::ext::{copy_and_hash, EntryExt};
-use crate::package::PackageFile;
-use crate::transaction::Transaction;
+use crate::{
+    copy_and_hash,
+    core::PackageHead,
+    EntryExt,
+    Error,
+    keys::PublicKeyFile,
+    PackageBuilder,
+    PackageFile,
+    READ_WRITE_HASH_BUF_SIZE,
+    ResultExt,
+    Transaction,
+};
 
 pub fn create(
     secret_path: impl AsRef<Path>,
@@ -72,8 +76,7 @@ pub fn list(
 
     let package = PackageFile::open(archive_path, &pkey)?;
     for entry in package.entries() {
-        let relative = entry.check_path()?;
-        println!("{}", relative.display());
+        println!("{}", entry.check_path()?.display());
     }
 
     Ok(())

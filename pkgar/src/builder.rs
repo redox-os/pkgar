@@ -7,12 +7,18 @@ use std::path::{Path, PathBuf};
 
 use blake3::Hasher;
 use error_chain::bail;
-use pkgar_core::{Entry, ENTRY_SIZE, Header, HEADER_SIZE, Mode};
-use pkgar_keys::SecretKeyFile;
 use sodiumoxide::crypto::sign;
 
-use crate::{Error, READ_WRITE_HASH_BUF_SIZE, ResultExt};
-use crate::ext::{check_path, copy_and_hash, EntryExt};
+use crate::{
+    check_path,
+    copy_and_hash,
+    core::{Entry, ENTRY_SIZE, Header, HEADER_SIZE, Mode},
+    EntryExt,
+    Error,
+    keys::SecretKeyFile,
+    READ_WRITE_HASH_BUF_SIZE,
+    ResultExt,
+};
 
 #[derive(Debug)]
 struct BuilderEntry {

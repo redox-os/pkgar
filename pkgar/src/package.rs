@@ -5,10 +5,21 @@ use std::path::{Path, PathBuf};
 use std::slice::Iter;
 
 use sodiumoxide::crypto::sign::PublicKey;
-use pkgar_core::{Entry, Header, HEADER_SIZE, PackageData, PackageHead, segment};
 
-use crate::{Error, ErrorKind, ResultExt};
-use crate::ext::PackageDataExt;
+use crate::{
+    core::{
+        Entry,
+        Header,
+        HEADER_SIZE,
+        PackageData,
+        PackageHead,
+        segment,
+    },
+    Error,
+    ErrorKind,
+    ResultExt,
+    PackageDataExt,
+};
 
 /// A `.pkgar` (or `.pkgar_head` or `.pkgar_data`) file on disk.
 #[derive(Debug)]

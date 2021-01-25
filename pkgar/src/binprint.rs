@@ -3,7 +3,7 @@
 // not sure that was a smart move...
 use std::convert::TryInto;
 
-use pkgar_core::{ENTRY_SIZE, HEADER_SIZE};
+use crate::core::{ENTRY_SIZE, HEADER_SIZE};
 
 fn eprint_grp(label: &str, group: &[u8]) {
     eprintln!("{:>16}: {:02x?}", label, group);

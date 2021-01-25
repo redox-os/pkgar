@@ -5,11 +5,11 @@ use clap::{App, AppSettings, Arg, crate_authors, crate_description, crate_name, 
 use pkgar::{
     binprint::format_print_archive,
     create,
+    keys::{DEFAULT_PUBKEY, DEFAULT_SECKEY},
     extract,
     remove,
     list,
 };
-use pkgar_keys::{DEFAULT_PUBKEY, DEFAULT_SECKEY};
 use user_error::UFE;
 
 fn main() {

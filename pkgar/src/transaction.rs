@@ -6,10 +6,17 @@ use std::os::unix::fs::{symlink, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 use blake3::Hash;
-use pkgar_core::{Mode, PackageData, PackageHead};
 
-use crate::{Error, ErrorKind, READ_WRITE_HASH_BUF_SIZE, ResultExt};
-use crate::ext::{copy_and_hash, EntryExt, PackageDataExt};
+use crate::{
+    copy_and_hash,
+    core::{Mode, PackageData, PackageHead},
+    EntryExt,
+    Error,
+    ErrorKind,
+    READ_WRITE_HASH_BUF_SIZE,
+    ResultExt,
+    PackageDataExt,
+};
 
 fn file_exists(path: impl AsRef<Path>) -> Result<bool, Error> {
     if let Err(err) = fs::metadata(&path) {
@@ -78,6 +85,7 @@ impl Action {
     }
 }
 
+/// Extraction options for individual packages.
 pub struct Transaction {
     actions: Vec<Action>,
 }
@@ -109,7 +117,9 @@ impl Transaction {
                 .map_err(Error::from)
                 .chain_err(|| entry )?;
             
-            let (entry_data_size, entry_data_hash) = match mode.kind() {
+            let mut entry_reader = pkg.entry_reader(entry);
+            
+            match mode.kind() {
                 Mode::FILE => {
                     //TODO: decide what to do when temp files are left over
                     let mut tmp_file = fs::OpenOptions::new()
@@ -120,13 +130,13 @@ impl Transaction {
                         .open(&tmp_path)
                         .chain_err(|| tmp_path.as_path() )?;
                     
-                    copy_and_hash(pkg.entry_reader(entry), &mut tmp_file, &mut buf)
+                    entry_reader.copy(&mut tmp_file, &mut buf)
                         .chain_err(|| &tmp_path )
-                        .chain_err(|| format!("Copying entry to tempfile: '{}'", relative_path.display()) )?
+                        .chain_err(|| format!("Copying entry to tempfile: '{}'", relative_path.display()) )?;
                 },
                 Mode::SYMLINK => {
                     let mut sym_target_bytes = Vec::new();
-                    let (size, hash) = copy_and_hash(pkg.entry_reader(entry), &mut sym_target_bytes, &mut buf)
+                    entry_reader.copy(&mut sym_target_bytes, &mut buf)
                         .chain_err(|| &tmp_path )
                         .chain_err(|| format!("Copying entry to tempfile: '{}'", relative_path.display()) )?;
                     
@@ -134,7 +144,6 @@ impl Transaction {
                     symlink(sym_target, &tmp_path)
                         .chain_err(|| sym_target )
                         .chain_err(|| format!("Symlinking to {}", tmp_path.display()) )?;
-                    (size, hash)
                 },
                 _ => {
                     return Err(Error::from(
@@ -144,7 +153,7 @@ impl Transaction {
                 }
             };
             
-            entry.verify(entry_data_hash, entry_data_size)
+            entry_reader.verify()
                 .chain_err(|| pkg.path() )?;
             
             actions.push(Action::Rename(tmp_path, target_path))

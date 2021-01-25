@@ -1,22 +1,27 @@
 mod bin;
 pub mod binprint;
 mod builder;
-pub mod ext;
+mod ext;
 mod package;
 mod transaction;
 
 pub use bin::*;
 pub use builder::*;
+pub use ext::*;
 pub use package::*;
 pub use transaction::*;
+
+pub use pkgar_core as core;
+pub use pkgar_keys as keys;
 
 use std::io;
 use std::path::{Path, PathBuf};
 
 use error_chain::error_chain;
-use pkgar_core::{Entry, Mode};
 //use thiserror::Error;
 use user_error::UFE;
+
+use crate::core::{Entry, Mode};
 
 const READ_WRITE_HASH_BUF_SIZE: usize = 4 * 1024 * 1024;
 
