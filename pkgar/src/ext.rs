@@ -4,92 +4,173 @@ use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path};
 
+use error_chain::bail;
 use blake3::{Hash, Hasher};
-use pkgar_core::{Entry, PackageSrc};
 
 use crate::{Error, ErrorKind, ResultExt};
+use crate::core::{Entry, Mode, PackageData};
 
-/// Handy associated functions for `pkgar_core::Entry` that depend on std
+/// Extension trait for [`Entry`].
 pub trait EntryExt {
+    fn new(
+        blake3: Hash,
+        offset: u64,
+        size: u64,
+        mode: Mode,
+        path: &Path
+    ) -> Result<Entry, Error>;
+
     fn check_path(&self) -> Result<&Path, Error>;
-    
+
     fn verify(&self, blake3: Hash, size: u64) -> Result<(), Error>;
 }
 
 impl EntryExt for Entry {
+    fn new(
+        blake3: Hash,
+        offset: u64,
+        size: u64,
+        mode: Mode,
+        path: &Path
+    ) -> Result<Entry, Error> {
+        let mut path_buf = [0; 256];
+        let path_bytes = path.as_os_str().as_bytes();
+
+        if path_bytes.len() >= path_buf.len() {
+            bail!(ErrorKind::PathTooLong(path.to_path_buf()));
+        }
+        path_buf[..path_bytes.len()].copy_from_slice(path_bytes);
+
+        Ok(Entry {
+            blake3: blake3.into(),
+            offset,
+            size,
+            mode: mode.bits(),
+            path: path_buf,
+        })
+    }
+
     /// Iterate the components of the path and ensure that there are no
     /// non-normal components.
     fn check_path(&self) -> Result<&Path, Error> {
         let path = Path::new(OsStr::from_bytes(self.path_bytes()));
-        for component in path.components() {
-            match component {
-                Component::Normal(_) => {},
-                invalid => {
-                    let bad_component: &Path = invalid.as_ref();
-                    return Err(Error::from_kind(
-                            ErrorKind::InvalidPathComponent(bad_component.to_path_buf())
-                        ))
-                        .chain_err(|| ErrorKind::Entry(*self) );
-                },
-            }
-        }
+        check_path(&path)?;
         Ok(&path)
     }
-    
+
+    /// Compare the given blake3 and size against this Entry's blake3 and size
+    /// and return Err if they do not match.
     fn verify(&self, blake3: Hash, size: u64) -> Result<(), Error> {
         if size != self.size() {
             Err(Error::from_kind(ErrorKind::LengthMismatch(size, self.size())))
-                .chain_err(|| ErrorKind::Entry(*self) )
         } else if blake3 != self.blake3() {
             Err(pkgar_core::Error::InvalidBlake3.into())
         } else {
             Ok(())
-        }
+        }.chain_err(|| *self )
     }
 }
 
-pub trait PackageSrcExt
-    where Self: PackageSrc + Sized,
+/// Extension trait for implementors of [`PackageData`].
+pub trait PackageDataExt
+    where Self: PackageData + Sized,
 {
-    /// Get the path corresponding to this `PackageSrc`. This will likely be
-    /// refactored to use something more generic than `Path` in future.
+    /// Get the path corresponding to this [`PackageData`].
     fn path(&self) -> &Path;
-    
-    /// Build a reader for a given entry on this source.
-    fn entry_reader(&mut self, entry: Entry) -> EntryReader<'_, Self> {
+
+    /// Build a reader for a given entry on this data. Note that there is no
+    /// checking done here to ensure that the entry is correctly matched with
+    /// this package data.
+    fn entry_reader(&self, entry: Entry) -> EntryReader<'_, Self> {
         EntryReader {
             src: self,
             entry,
+            
             pos: 0,
+            
+            hasher: Hasher::new(),
         }
     }
 }
 
-/// A reader that provides acess to one entry's data within a `PackageSrc`.
-/// Use `PackageSrcExt::entry_reader` for construction
-pub struct EntryReader<'a, Src>
-    where Src: PackageSrc
-{
-    src: &'a mut Src,
+/// Allow a tuple of `(PackageHead, PackageData + PackageDataExt)` to implement
+/// all the traits, so as to allow other APIs to take only one entity.
+impl<A, D: PackageDataExt> PackageDataExt for (A, D) {
+    #[inline]
+    fn path(&self) -> &Path {
+        self.1.path()
+    }
+}
+
+/// A reader that provides acess to one entry's data within a [`PackageData`].
+/// Constructed with [`PackageDataExt::entry_reader`].
+///
+/// `EntryReader` keeps track of the length of the read data and hashes it as
+/// `read` is called. Use [`EntryReader::verify`] to consume the reader and
+/// check the read data.
+///
+///  Note that [`EntryReader::copy`] may be more efficient than
+/// [`std::io::copy`] under some circumstances.
+pub struct EntryReader<'a, Src: PackageData> {
+    src: &'a Src,
     entry: Entry,
+    
     pos: usize,
+    
+    hasher: Hasher,
+}
+
+impl<'a, Src, E> EntryReader<'a, Src>
+    where Src: PackageData<Err = E>,
+          E: From<crate::core::Error> + std::error::Error + Into<Error>,
+{
+    fn read_inner(&mut self, buf: &mut [u8]) -> Result<usize, E> {
+        let count = self.src.read_entry(self.entry, self.pos, buf)?;
+        
+        self.pos += count;
+        self.hasher.update_with_join::<blake3::join::RayonJoin>(&buf[..count]);
+        Ok(count)
+    }
+    
+    /// Similar to [`std::io::copy`], but bring your own buffer.
+    pub fn copy<W: Write>(
+        &mut self,
+        mut write: W,
+        buf: &mut [u8],
+    ) -> Result<usize, Error> {
+        let start = self.pos;
+        loop {
+            let count = self.read_inner(buf)
+                .map_err(E::into)?;
+            if count == 0 {
+                break;
+            }
+            write.write_all(&buf[..count])?;
+        }
+        Ok(self.pos - start)
+    }
+    
+    /// Consume this `EntryReader` and return a corresponding error if the
+    /// hash or size generated by reading from this reader does not match
+    /// the corresponding values in the entry passed during construction.
+    pub fn verify(self) -> Result<(), Error> {
+        self.entry.verify(self.hasher.finalize(), self.pos as u64)
+    }
 }
 
 impl<Src, E> Read for EntryReader<'_, Src>
-    where
-        Src: PackageSrc<Err = E>,
-        E: From<pkgar_core::Error> + std::error::Error,
+    where Src: PackageData<Err = E>,
+          E: From<crate::core::Error> + std::error::Error + Into<Error>,
 {
+    #[inline]
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let count = self.src.read_entry(self.entry, self.pos, buf)
+        self.read_inner(buf)
             // This is a little painful, since e is pkgar::Error...
             // However, this is likely to be a very rarely triggered error
             // condition.
             .map_err(|err|
                 io::Error::new(io::ErrorKind::Other, err.to_string())
-            )?;
-        self.pos += count;
-        Ok(count)
+            )
     }
 }
 
@@ -110,9 +191,72 @@ pub(crate) fn copy_and_hash<R: Read, W: Write>(
         }
         written += count as u64;
         hasher.update_with_join::<blake3::join::RayonJoin>(&buf[..count]);
-        
+
         write.write_all(&buf[..count])?;
     }
     Ok((written, hasher.finalize()))
+}
+
+/// Iterate the components of a path and ensure that none are non-normal
+/// (the path is relative rather than absolute, and has no `./` or `../`
+/// elements.
+pub(crate) fn check_path(path: &Path) -> Result<(), Error> {
+    for component in path.components() {
+        match component {
+            Component::Normal(_) => {},
+            invalid => {
+                let bad_component: &Path = invalid.as_ref();
+                bail!(ErrorKind::InvalidPathComponent(bad_component.to_path_buf()));
+            },
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use std::io::Cursor;
+    use std::path::Path;
+
+    use pkgar_core::{Entry, Mode};
+
+    use crate::{Error, READ_WRITE_HASH_BUF_SIZE};
+    use crate::ext::{check_path, copy_and_hash, EntryExt};
+
+    #[test]
+    fn entry_constructor() -> Result<(), Error> {
+        const ENTRY_DATA: &str = "some file contents";
+
+        let hash = blake3::hash(ENTRY_DATA.as_bytes());
+
+        let entry = Entry::new(hash, 0, ENTRY_DATA.len() as u64, Mode::PERM, Path::new("/some/filepath"))?;
+
+        entry.verify(hash, ENTRY_DATA.len() as u64)
+    }
+    
+    #[test]
+    fn path_check() {
+        assert!(check_path(Path::new("/absolute/paths")).is_err());
+        assert!(check_path(Path::new("trying_to_break_something/../../../..")).is_err());
+        assert!(check_path(Path::new("./test.sh")).is_err());
+        
+        check_path(Path::new("normal/relative/path"))
+            .expect("Normal paths should pass");
+    }
+    
+    #[test]
+    fn copy_check() -> Result<(), Error> {
+        //TODO: Copy a buffer that requires multiple iterations of copy/hash
+        const SOME_DATA: &str = "here's a buffer to copy and hash";
+        
+        let mut dest = Cursor::new(Vec::new());
+        let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
+        let (size, hash) = copy_and_hash(SOME_DATA.as_bytes(), &mut dest, &mut buf)?;
+        
+        assert_eq!(size, SOME_DATA.len() as u64);
+        assert_eq!(hash, blake3::hash(SOME_DATA.as_bytes()));
+        assert_eq!(dest.into_inner(), SOME_DATA.as_bytes());
+        Ok(())
+    }
 }
 

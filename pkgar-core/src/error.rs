@@ -3,6 +3,7 @@ use alloc::string::ToString;
 use core::fmt::{Display, Formatter, Result};
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Error {
     InvalidBlake3,
     InvalidData,
