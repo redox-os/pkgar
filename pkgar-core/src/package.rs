@@ -48,8 +48,8 @@ pub trait PackageData {
     }
 }
 
-/// Allow a tuple of (PackageHead, PackageData) to implement both traits, so to
-/// allow other APIs to take only one entity
+/// Allow a tuple of `(PackageHead, PackageData)` to implement both traits, so
+/// as to allow other APIs to take only one entity.
 impl<H: PackageHead, A> PackageHead for (H, A) {
     #[inline]
     fn header(&self) -> Header {
@@ -62,6 +62,8 @@ impl<H: PackageHead, A> PackageHead for (H, A) {
     }
 }
 
+/// Allow a tuple of `(PackageHead, PackageData)` to implement both traits, so
+/// as to allow other APIs to take only one entity.
 impl<A, D: PackageData> PackageData for (A, D) {
     type Err = D::Err;
 

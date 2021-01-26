@@ -86,6 +86,40 @@ impl Action {
 }
 
 /// Extraction options for individual packages.
+///
+/// A `Transaction` is a handle to some temporary files on the system. The
+/// constructors of this type create the tempfiles and [`Transaction::commit`]
+/// moves them into their destination name, thus replacing a package with
+/// another package is almost atomic.
+///
+/// Temp files are named according to their containing directory and filename,
+/// or containing directory and hash, if the temp file name already exists.
+/// Thus, the temp file for a package entry targeted to `etc/fun/other.toml`
+/// unpacking at a base path of `/` will be located at
+/// `/etc/fun/.pkgar.other.toml` or `/etc/fun/.pkgar.<entry_hash>` if the
+/// former path already exists.
+///
+/// ## A word on types
+/// The constructors of `Transaction` take parameters that either
+/// `impl PackageHead`, or are `Pkg: PackageHead + PackageData`. In order to
+/// use types that only implement one of these traits, they are implemented
+/// for 2-tuples that contain both types (see [`PackageHead`] and
+/// [`PackageData`]), so that this syntax works:
+/// ```no_run
+/// use pkgar::{PackageFile, Transaction};
+/// use pkgar::keys::PublicKeyFile;
+///
+/// let pkey = PublicKeyFile::open("/pkg/keys/somekey.pub.toml")
+///     .unwrap()
+///     .pkey;
+/// let head = PackageFile::open_head("my_pkg.pkgar_head", &pkey).unwrap();
+/// let data = PackageFile::open_data("my_pkg.pkgar_data").unwrap();
+///
+/// Transaction::install(&(head, data), "/base/path")
+///     .unwrap()
+///     .commit()
+///     .unwrap();
+/// ```
 pub struct Transaction {
     actions: Vec<Action>,
 }
@@ -234,10 +268,11 @@ impl Transaction {
         Ok(count)
     }
     
-    /// Clean up any tmp files referenced by this transaction without committing.
-    /// Note that this function will check all actions and only after it has attempted
-    /// to abort them all will it return an error with context info. Remaining actions
-    /// are left as a part of this transaction to allow for re-runs of this function.
+    /// Clean up any temp files referenced by this transaction without committing.
+    /// Note that this function will check all temp files and only after it has
+    /// attempted to remove them all will it return an error with context info.
+    /// Failed removes are left as a part of this transaction to allow for
+    /// re-runs of this function.
     pub fn abort(&mut self) -> Result<usize, Error> {
         let mut count = 0;
         let mut last_failed = false;

@@ -93,6 +93,15 @@ pub trait PackageDataExt
     }
 }
 
+/// Allow a tuple of `(PackageHead, PackageData + PackageDataExt)` to implement
+/// all the traits, so as to allow other APIs to take only one entity.
+impl<A, D: PackageDataExt> PackageDataExt for (A, D) {
+    #[inline]
+    fn path(&self) -> &Path {
+        self.1.path()
+    }
+}
+
 /// A reader that provides acess to one entry's data within a [`PackageData`].
 /// Constructed with [`PackageDataExt::entry_reader`].
 ///
