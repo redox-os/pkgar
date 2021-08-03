@@ -146,7 +146,7 @@ pub fn create(
                     .read(true)
                     .open(&path)
                     .chain_err(|| &path )?;
-                
+
                 copy_and_hash(&mut entry_file, &mut archive_file, &mut buf)
                     .chain_err(|| &path )
                     .chain_err(|| format!("Writing entry to archive: '{}'", relative.display()) )?
@@ -179,7 +179,7 @@ pub fn create(
 
     //TODO: ensure file size matches
 
-    header.signature = sign::sign_detached(unsafe { &plain::as_bytes(&header)[64..] }, &secret_key).0;
+    header.signature = sign::sign_detached(unsafe { &plain::as_bytes(&header)[64..] }, &secret_key).to_bytes();
 
     // Write archive header
     archive_file.seek(SeekFrom::Start(0))
@@ -271,4 +271,3 @@ pub fn verify(
     }
     Ok(())
 }
-

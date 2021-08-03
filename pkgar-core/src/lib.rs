@@ -1,5 +1,4 @@
 #![no_std]
-#![feature(min_const_generics)]
 extern crate alloc;
 
 use core::mem;
@@ -34,7 +33,7 @@ impl Mode {
     pub fn kind(self) -> Mode {
         self & Mode::KIND
     }
-    
+
     /// Only any permissions bits
     pub fn perm(self) -> Mode {
         self & Mode::PERM
@@ -59,4 +58,3 @@ mod tests {
         assert_eq!(ENTRY_SIZE, 308);
     }
 }
-
