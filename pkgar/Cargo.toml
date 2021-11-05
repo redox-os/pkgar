@@ -13,7 +13,7 @@ libc = "~0.2.82"
 plain = "~0.2.3"
 pkgar-core = { path = "../pkgar-core" }
 pkgar-keys = { path = "../pkgar-keys" }
-sodiumoxide = { version = "~0.2.6", default_features = false }
+sodiumoxide = { version = "~0.2.7", default_features = false }
 user-error = "~1.2.8"
 
 [dependencies.clap]

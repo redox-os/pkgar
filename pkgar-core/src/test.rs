@@ -51,7 +51,8 @@ pub fn package(pkey: sign::PublicKey, skey: sign::SecretKey) -> (Vec<u8>, Vec<u8
     header.blake3 = blake3::hash(&entries_bytes).into();
     
     let header_bytes = unsafe { plain::as_bytes(&header) };
-    header.signature = sign::sign_detached(&header_bytes[64..], &skey).0;
+    header.signature = sign::sign_detached(&header_bytes[64..], &skey)
+        .to_bytes();
     
     let mut head = vec![];
     head.extend_from_slice(unsafe { plain::as_bytes(&header) });

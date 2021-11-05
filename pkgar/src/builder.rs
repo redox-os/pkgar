@@ -337,7 +337,7 @@ impl PackageBuilder {
         header.signature = sign::sign_detached(
             unsafe { &plain::as_bytes(&header)[64..] },
             &secret_key,
-        ).0;
+        ).to_bytes();
         
         writer.seek(SeekFrom::Start(0))?;
         writer.write_all(unsafe { plain::as_bytes(&header) })?;
@@ -402,3 +402,4 @@ impl fmt::Debug for PackageBuilder {
             .finish()
     }
 }
+

@@ -1,5 +1,4 @@
 #![no_std]
-#![feature(min_const_generics)]
 extern crate alloc;
 
 // Enable std for tests
