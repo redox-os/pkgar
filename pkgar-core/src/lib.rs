@@ -1,6 +1,10 @@
 #![no_std]
 extern crate alloc;
 
+// Enable std for tests
+#[cfg(test)]
+extern crate std;
+
 use core::mem;
 
 use bitflags::bitflags;
@@ -8,12 +12,15 @@ use bitflags::bitflags;
 pub use crate::entry::Entry;
 pub use crate::error::Error;
 pub use crate::header::Header;
-pub use crate::package::{PackageBuf, PackageSrc};
+pub use crate::package::{PackageBuf, PackageData, PackageHead, segment};
 
 mod entry;
 mod error;
 mod header;
 mod package;
+
+#[cfg(test)]
+pub mod test;
 
 pub const HEADER_SIZE: usize = mem::size_of::<Header>();
 pub const ENTRY_SIZE: usize = mem::size_of::<Entry>();
@@ -23,6 +30,7 @@ bitflags! {
     pub struct Mode: u32 {
         const PERM = 0o007777;
         const KIND = 0o170000;
+
         const FILE = 0o100000;
         const SYMLINK = 0o120000;
     }
@@ -40,21 +48,3 @@ impl Mode {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use core::mem;
-
-    use crate::{Entry, ENTRY_SIZE, Header, HEADER_SIZE};
-
-    #[test]
-    fn header_size() {
-        assert_eq!(mem::size_of::<Header>(), 136);
-        assert_eq!(HEADER_SIZE, 136);
-    }
-
-    #[test]
-    fn entry_size() {
-        assert_eq!(mem::size_of::<Entry>(), 308);
-        assert_eq!(ENTRY_SIZE, 308);
-    }
-}

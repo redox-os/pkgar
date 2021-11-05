@@ -1,13 +1,15 @@
+#![feature(try_blocks)]
 use std::process;
 
 use clap::{App, AppSettings, Arg, crate_authors, crate_description, crate_name, crate_version, SubCommand};
 use pkgar::{
+    binprint::format_print_archive,
     create,
+    keys::{DEFAULT_PUBKEY, DEFAULT_SECKEY},
     extract,
     remove,
     list,
 };
-use pkgar_keys::{DEFAULT_PUBKEY, DEFAULT_SECKEY};
 use user_error::UFE;
 
 fn main() {
@@ -79,6 +81,18 @@ fn main() {
             .arg(&arg_archive)
             .arg(&arg_basedir)
         )
+        .subcommand(SubCommand::with_name("binprint")
+            .about("Debug print an archive without any verification")
+            .arg(&arg_archive)
+            .arg(Arg::with_name("entry_count")
+                .help("The number of entries is required as the package's validity is unknown")
+                .short("e")
+                .long("entry_count")
+                .required(true)
+                .takes_value(true)
+                .value_name("ENTRY_COUNT")
+            )
+        )
         .get_matches();
 
     let res = if let Some(matches) = matches.subcommand_matches("create") {
@@ -104,6 +118,14 @@ fn main() {
             matches.value_of("pkey").unwrap(),
             matches.value_of("archive").unwrap()
         )
+    } else if let Some(matches) = matches.subcommand_matches("binprint") {
+        try {
+            let buf = std::fs::read(matches.value_of("archive").unwrap())?;
+            let count = matches.value_of("entry_count")
+                .unwrap()
+                .parse::<usize>().unwrap();
+            format_print_archive(&buf, count)
+        }
     } else {
         Ok(())
     };

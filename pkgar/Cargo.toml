@@ -8,26 +8,26 @@ repository = "https://gitlab.redox-os.org/redox-os/pkgar"
 edition = "2018"
 
 [dependencies]
-error-chain = "0.12"
-plain = "0.2.3"
+error-chain = "~0.12.4"
+libc = "~0.2.82"
+plain = "~0.2.3"
 pkgar-core = { path = "../pkgar-core" }
 pkgar-keys = { path = "../pkgar-keys" }
-sodiumoxide = { version = "0.2.6", default_features = false }
-#thiserror = "1.0.20"
-user-error = "1.2.8"
+sodiumoxide = { version = "~0.2.7", default_features = false }
+user-error = "~1.2.8"
 
 [dependencies.clap]
-version = "2.33.3"
+version = "~2.33.3"
 optional = true
 
 [dependencies.blake3]
-version = "0.3.6"
+version = "~0.3.7"
 default-features = false
 features = ["rayon"]
 
 [dev-dependencies]
-copy_dir = "0.1.2"
-tempfile = "3.1.0"
+copy_dir = "~0.1.2"
+tempfile = "~3.1.0"
 
 [features]
 default = ["clap", "std"]

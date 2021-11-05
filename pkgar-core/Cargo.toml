@@ -8,8 +8,8 @@ repository = "https://gitlab.redox-os.org/redox-os/pkgar"
 edition = "2018"
 
 [dependencies]
-bitflags = "1.2.1"
-blake3 = { version = "0.3.6", default_features = false, features = ["rayon"] }
-plain = "0.2.3"
-sodiumoxide = { version = "0.2.6", default_features = false }
+bitflags = "~1.2.1"
+blake3 = { version = "~0.3.6", default_features = false, features = ["rayon"] }
+plain = "~0.2.3"
+sodiumoxide = { version = "~0.2.7", default_features = false }
 

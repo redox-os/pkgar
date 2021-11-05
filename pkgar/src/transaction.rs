@@ -6,10 +6,17 @@ use std::os::unix::fs::{symlink, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 use blake3::Hash;
-use pkgar_core::{Mode, PackageSrc};
 
-use crate::{Error, ErrorKind, READ_WRITE_HASH_BUF_SIZE, ResultExt};
-use crate::ext::{copy_and_hash, EntryExt, PackageSrcExt};
+use crate::{
+    copy_and_hash,
+    core::{Mode, PackageData, PackageHead},
+    EntryExt,
+    Error,
+    ErrorKind,
+    READ_WRITE_HASH_BUF_SIZE,
+    ResultExt,
+    PackageDataExt,
+};
 
 fn file_exists(path: impl AsRef<Path>) -> Result<bool, Error> {
     if let Err(err) = fs::metadata(&path) {
@@ -78,25 +85,60 @@ impl Action {
     }
 }
 
+/// Extraction options for individual packages.
+///
+/// A `Transaction` is a handle to some temporary files on the system. The
+/// constructors of this type create the tempfiles and [`Transaction::commit`]
+/// moves them into their destination name, thus replacing a package with
+/// another package is almost atomic.
+///
+/// Temp files are named according to their containing directory and filename,
+/// or containing directory and hash, if the temp file name already exists.
+/// Thus, the temp file for a package entry targeted to `etc/fun/other.toml`
+/// unpacking at a base path of `/` will be located at
+/// `/etc/fun/.pkgar.other.toml` or `/etc/fun/.pkgar.<entry_hash>` if the
+/// former path already exists.
+///
+/// ## A word on types
+/// The constructors of `Transaction` take parameters that either
+/// `impl PackageHead`, or are `Pkg: PackageHead + PackageData`. In order to
+/// use types that only implement one of these traits, they are implemented
+/// for 2-tuples that contain both types (see [`PackageHead`] and
+/// [`PackageData`]), so that this syntax works:
+/// ```no_run
+/// use pkgar::{PackageFile, Transaction};
+/// use pkgar::keys::PublicKeyFile;
+///
+/// let pkey = PublicKeyFile::open("/pkg/keys/somekey.pub.toml")
+///     .unwrap()
+///     .pkey;
+/// let head = PackageFile::open_head("my_pkg.pkgar_head", &pkey).unwrap();
+/// let data = PackageFile::open_data("my_pkg.pkgar_data").unwrap();
+///
+/// Transaction::install(&(head, data), "/base/path")
+///     .unwrap()
+///     .commit()
+///     .unwrap();
+/// ```
 pub struct Transaction {
     actions: Vec<Action>,
 }
 
 impl Transaction {
     pub fn install<Pkg>(
-        src: &mut Pkg,
-        base_dir: impl AsRef<Path>
+        pkg: &Pkg,
+        base_dir: impl AsRef<Path>,
     ) -> Result<Transaction, Error>
-        where Pkg: PackageSrc<Err = Error> + PackageSrcExt,
+        where Pkg: PackageHead + PackageData<Err = Error> + PackageDataExt,
     {
         let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
         
-        let entries = src.read_entries()?;
-        let mut actions = Vec::with_capacity(entries.len());
+        let mut actions = Vec::with_capacity(pkg.header().count() as usize);
         
-        for entry in entries {
+        for entry in pkg.entries().cloned() {
+            //TODO: Path context for invalid entry data
             let relative_path = entry.check_path()
-                .chain_err(|| src.path() )?;
+                .chain_err(|| entry )?;
             
             let target_path = base_dir.as_ref().join(relative_path);
             //HELP: Under what circumstances could this ever fail?
@@ -107,10 +149,11 @@ impl Transaction {
             
             let mode = entry.mode()
                 .map_err(Error::from)
-                .chain_err(|| src.path() )
-                .chain_err(|| ErrorKind::Entry(entry) )?;
+                .chain_err(|| entry )?;
             
-            let (entry_data_size, entry_data_hash) = match mode.kind() {
+            let mut entry_reader = pkg.entry_reader(entry);
+            
+            match mode.kind() {
                 Mode::FILE => {
                     //TODO: decide what to do when temp files are left over
                     let mut tmp_file = fs::OpenOptions::new()
@@ -121,33 +164,31 @@ impl Transaction {
                         .open(&tmp_path)
                         .chain_err(|| tmp_path.as_path() )?;
                     
-                    copy_and_hash(src.entry_reader(entry), &mut tmp_file, &mut buf)
+                    entry_reader.copy(&mut tmp_file, &mut buf)
                         .chain_err(|| &tmp_path )
-                        .chain_err(|| format!("Copying entry to tempfile: '{}'", relative_path.display()) )?
+                        .chain_err(|| format!("Copying entry to tempfile: '{}'", relative_path.display()) )?;
                 },
                 Mode::SYMLINK => {
-                    let mut data = Vec::new();
-                    let (size, hash) = copy_and_hash(src.entry_reader(entry), &mut data, &mut buf)
+                    let mut sym_target_bytes = Vec::new();
+                    entry_reader.copy(&mut sym_target_bytes, &mut buf)
                         .chain_err(|| &tmp_path )
                         .chain_err(|| format!("Copying entry to tempfile: '{}'", relative_path.display()) )?;
                     
-                    let sym_target = Path::new(OsStr::from_bytes(&data));
+                    let sym_target = Path::new(OsStr::from_bytes(&sym_target_bytes));
                     symlink(sym_target, &tmp_path)
                         .chain_err(|| sym_target )
                         .chain_err(|| format!("Symlinking to {}", tmp_path.display()) )?;
-                    (size, hash)
                 },
                 _ => {
                     return Err(Error::from(
                             pkgar_core::Error::InvalidMode(mode.bits())
                         ))
-                        .chain_err(|| ErrorKind::Entry(entry) )
-                        .chain_err(|| src.path() );
+                        .chain_err(|| entry );
                 }
             };
             
-            entry.verify(entry_data_hash, entry_data_size)
-                .chain_err(|| src.path() )?;
+            entry_reader.verify()
+                .chain_err(|| pkg.path() )?;
             
             actions.push(Action::Rename(tmp_path, target_path))
         }
@@ -157,18 +198,15 @@ impl Transaction {
     }
     
     pub fn replace<Pkg>(
-        old: &mut Pkg,
-        new: &mut Pkg,
+        old: &impl PackageHead,
+        new: &Pkg,
         base_dir: impl AsRef<Path>,
     ) -> Result<Transaction, Error>
-        where Pkg: PackageSrc<Err = Error> + PackageSrcExt,
+        where Pkg: PackageHead + PackageData<Err = Error> + PackageDataExt,
     {
-        let old_entries = old.read_entries()?;
-        let new_entries = new.read_entries()?;
-        
         // All the files that are present in old but not in new
-        let mut actions = old_entries.iter()
-            .filter(|old_e| new_entries.iter()
+        let mut actions = old.entries()
+            .filter(|old_e| new.entries()
                 .find(|new_e| new_e.blake3() == old_e.blake3() )
                 .is_none())
             .map(|e| {
@@ -178,24 +216,20 @@ impl Transaction {
             })
             .collect::<Result<Vec<Action>, Error>>()?;
         
-        //TODO: Don't force a re-read of all the entries for the new package
         let mut trans = Transaction::install(new, base_dir)?;
         trans.actions.append(&mut actions);
         Ok(trans)
     }
     
-    pub fn remove<Pkg>(
-        pkg: &mut Pkg,
-        base_dir: impl AsRef<Path>
-    ) -> Result<Transaction, Error>
-        where Pkg: PackageSrc<Err = Error>,
-    {
+    pub fn remove(
+        pkg: &impl PackageHead,
+        base_dir: impl AsRef<Path>,
+    ) -> Result<Transaction, Error> {
         let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
         
-        let entries = pkg.read_entries()?;
-        let mut actions = Vec::with_capacity(entries.len());
+        let mut actions = Vec::with_capacity(pkg.header().count() as usize);
         
-        for entry in entries {
+        for entry in pkg.entries() {
             let relative_path = entry.check_path()?;
             
             let target_path = base_dir.as_ref()
@@ -234,10 +268,11 @@ impl Transaction {
         Ok(count)
     }
     
-    /// Clean up any tmp files referenced by this transaction without committing.
-    /// Note that this function will check all actions and only after it has attempted
-    /// to abort them all will it return an error with context info. Remaining actions
-    /// are left as a part of this transaction to allow for re-runs of this function.
+    /// Clean up any temp files referenced by this transaction without committing.
+    /// Note that this function will check all temp files and only after it has
+    /// attempted to remove them all will it return an error with context info.
+    /// Failed removes are left as a part of this transaction to allow for
+    /// re-runs of this function.
     pub fn abort(&mut self) -> Result<usize, Error> {
         let mut count = 0;
         let mut last_failed = false;

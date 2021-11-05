@@ -25,7 +25,7 @@ time target/$build/pkgar \
     create \
     --skey target/test/secret.toml \
     --archive target/test/src.pkg \
-    pkgar/src
+    pkgar
 
 time target/$build/pkgar \
     list \
@@ -38,7 +38,7 @@ time target/$build/pkgar \
     --archive target/test/src.pkg \
     target/test/src
 
-diff -ruwN pkgar/src target/test/src
+diff -ruwN pkgar target/test/src
 
 time target/$build/pkgar \
     remove \
@@ -46,7 +46,7 @@ time target/$build/pkgar \
     --archive target/test/src.pkg \
     target/test/src
 
-if [[ "$(ls -A target/test/src)" ]]; then
+if [[ "$(find target/test/src -type f)" ]]; then
     exit 1
 fi
 

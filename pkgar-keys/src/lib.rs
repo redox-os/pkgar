@@ -254,7 +254,7 @@ impl SecretKeyFile {
     }
     
     /// Returns `None` if the secret key is encrypted.
-    pub fn key(&mut self) -> Option<sign::SecretKey> {
+    pub fn key(&self) -> Option<sign::SecretKey> {
         match &self.skey {
             SKey::Plain(skey) => Some(skey.clone()),
             SKey::Cipher(_) => None,
