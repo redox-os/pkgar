@@ -24,18 +24,23 @@ time target/$build/pkgar-keys gen \
 time target/$build/pkgar \
     create \
     --skey target/test/secret.toml \
-    --archive target/test/src.pkg \
+    --archive target/test/src.pkgar \
     pkgar/src
 
 time target/$build/pkgar \
     list \
     --pkey target/test/public.toml \
-    --archive target/test/src.pkg
+    --archive target/test/src.pkgar
+
+time target/$build/pkgar \
+    split \
+    --pkey target/test/public.toml \
+    --archive target/test/src.pkgar
 
 time target/$build/pkgar \
     extract \
     --pkey target/test/public.toml \
-    --archive target/test/src.pkg \
+    --archive target/test/src.pkgar \
     target/test/src
 
 diff -ruwN pkgar/src target/test/src
@@ -43,7 +48,7 @@ diff -ruwN pkgar/src target/test/src
 time target/$build/pkgar \
     remove \
     --pkey target/test/public.toml \
-    --archive target/test/src.pkg \
+    --archive target/test/src.pkgar \
     target/test/src
 
 if [[ "$(ls -A target/test/src)" ]]; then

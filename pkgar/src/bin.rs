@@ -1,5 +1,5 @@
 use std::fs::{self, File};
-use std::io::{self, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -243,6 +243,51 @@ pub fn list(
     for entry in package.read_entries()? {
         let relative = entry.check_path()?;
         println!("{}", relative.display());
+    }
+
+    Ok(())
+}
+
+pub fn split(
+    pkey_path: impl AsRef<Path>,
+    archive_path: impl AsRef<Path>,
+) -> Result<(), Error> {
+    let pkey = PublicKeyFile::open(&pkey_path.as_ref())?.pkey;
+
+    let package = PackageFile::new(&archive_path, &pkey)?;
+    let data_offset = package.header().total_size()?;
+    let mut src = package.src.into_inner();
+
+    {
+        let data_path = archive_path.as_ref().with_extension("pkgar_data");
+        let mut data_file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&data_path)
+            .chain_err(|| &data_path )?;
+
+        src.seek(SeekFrom::Start(data_offset))
+            .chain_err(|| archive_path.as_ref())?;
+        io::copy(&mut src, &mut data_file)
+            .chain_err(|| archive_path.as_ref())
+            .chain_err(|| &data_path)?;
+    }
+
+    {
+        let head_path = archive_path.as_ref().with_extension("pkgar_head");
+        let mut head_file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&head_path)
+            .chain_err(|| &head_path )?;
+
+        src.seek(SeekFrom::Start(0))
+            .chain_err(|| archive_path.as_ref())?;
+        io::copy(&mut src.take(data_offset), &mut head_file)
+            .chain_err(|| archive_path.as_ref())
+            .chain_err(|| &head_path)?;
     }
 
     Ok(())

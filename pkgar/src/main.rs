@@ -6,6 +6,7 @@ use pkgar::{
     extract,
     remove,
     list,
+    split,
 };
 use pkgar_keys::{DEFAULT_PUBKEY, DEFAULT_SECKEY};
 use user_error::UFE;
@@ -79,6 +80,11 @@ fn main() {
             .arg(&arg_archive)
             .arg(&arg_basedir)
         )
+        .subcommand(SubCommand::with_name("split")
+            .about("Split archive into head and data files")
+            .arg(&arg_pkey)
+            .arg(&arg_archive)
+        )
         .get_matches();
 
     let res = if let Some(matches) = matches.subcommand_matches("create") {
@@ -104,6 +110,11 @@ fn main() {
             matches.value_of("pkey").unwrap(),
             matches.value_of("archive").unwrap()
         )
+    } else if let Some(matches) = matches.subcommand_matches("split") {
+        split(
+            matches.value_of("pkey").unwrap(),
+            matches.value_of("archive").unwrap()
+        )
     } else {
         Ok(())
     };
@@ -116,4 +127,3 @@ fn main() {
         }
     }
 }
-
