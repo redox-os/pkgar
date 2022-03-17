@@ -10,8 +10,8 @@ edition = "2018"
 [dependencies]
 error-chain = "0.12"
 plain = "0.2.3"
-pkgar-core = { path = "../pkgar-core" }
-pkgar-keys = { path = "../pkgar-keys" }
+pkgar-core = { version = "0.1.0", path = "../pkgar-core" }
+pkgar-keys = { version = "0.1.0", path = "../pkgar-keys" }
 sodiumoxide = { version = "=0.2.6", default_features = false }
 #thiserror = "1.0.20"
 user-error = "1.2.8"
