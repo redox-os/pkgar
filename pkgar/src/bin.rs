@@ -179,7 +179,7 @@ pub fn create(
 
     //TODO: ensure file size matches
 
-    header.signature = sign::sign_detached(unsafe { &plain::as_bytes(&header)[64..] }, &secret_key).to_bytes();
+    header.signature = sign::sign_detached(unsafe { &plain::as_bytes(&header)[64..] }, &secret_key).0;
 
     // Write archive header
     archive_file.seek(SeekFrom::Start(0))
