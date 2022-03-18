@@ -51,7 +51,8 @@ impl PackageSrc for PackageFile {
 
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Err> {
         self.src.seek(SeekFrom::Start(offset))?;
-        Ok(self.src.read(buf)?)
+        self.src.read_exact(buf)?;
+        Ok(buf.len())
     }
 }
 
