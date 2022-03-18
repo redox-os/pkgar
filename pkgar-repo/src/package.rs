@@ -1,6 +1,9 @@
 use pkgar_core::{HEADER_SIZE, Header, PackageSrc};
 use sodiumoxide::crypto::sign::PublicKey;
-use std::io::Read;
+use std::{
+    convert::TryFrom,
+    io::Read
+};
 
 use crate::Error;
 
@@ -41,7 +44,12 @@ impl<'a> PackageSrc for PackageUrl<'a> {
         if buf.is_empty() {
             return Ok(0);
         }
-        let end_offset = offset + (buf.len() as u64 - 1);
+        let end_offset = offset.checked_add(
+            u64::try_from(
+                buf.len().checked_sub(1)
+                    .ok_or(pkgar_core::Error::Overflow)?
+            ).map_err(pkgar_core::Error::TryFromInt)?
+        ).ok_or(pkgar_core::Error::Overflow)?;
 
         let range = format!("bytes={}-{}", offset, end_offset);
         eprint!("Request {} from {}", range, self.url);
