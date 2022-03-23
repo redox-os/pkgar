@@ -53,12 +53,23 @@ time target/$build/pkgar \
 diff -ruwN pkgar/src target/test/src
 
 time target/$build/pkgar \
+    verify \
+    --pkey target/test/public.toml \
+    --archive target/test/src.pkgar \
+    target/test/src
+
+time target/$build/pkgar \
+    verify \
+    --pkey target/test/public.toml \
+    --archive target/test/src.pkgar_head \
+    target/test/src
+
+time target/$build/pkgar \
     remove \
     --pkey target/test/public.toml \
     --archive target/test/src.pkgar \
     target/test/src
 
-if [[ "$(ls -A target/test/src)" ]]; then
+if [[ "$(find target/test/src '!' -type d)" ]]; then
     exit 1
 fi
-

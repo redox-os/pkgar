@@ -7,6 +7,7 @@ use pkgar::{
     remove,
     list,
     split,
+    verify,
 };
 use pkgar_keys::{DEFAULT_PUBKEY, DEFAULT_SECKEY};
 use user_error::UFE;
@@ -96,6 +97,12 @@ fn main() {
                     .value_name("data")
             )
         )
+        .subcommand(SubCommand::with_name("verify")
+            .about("Verify archive")
+            .arg(&arg_pkey)
+            .arg(&arg_archive)
+            .arg(&arg_basedir)
+        )
         .get_matches();
 
     let res = if let Some(matches) = matches.subcommand_matches("create") {
@@ -127,6 +134,12 @@ fn main() {
             matches.value_of("archive").unwrap(),
             matches.value_of("head").unwrap(),
             matches.value_of("data")
+        )
+    } else if let Some(matches) = matches.subcommand_matches("verify") {
+        verify(
+            matches.value_of("pkey").unwrap(),
+            matches.value_of("archive").unwrap(),
+            matches.value_of("basedir").unwrap()
         )
     } else {
         Ok(())
