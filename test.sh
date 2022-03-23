@@ -35,7 +35,14 @@ time target/$build/pkgar \
 time target/$build/pkgar \
     split \
     --pkey target/test/public.toml \
-    --archive target/test/src.pkgar
+    --archive target/test/src.pkgar \
+    target/test/src.pkgar_head \
+    target/test/src.pkgar_data
+
+time target/$build/pkgar \
+    list \
+    --pkey target/test/public.toml \
+    --archive target/test/src.pkgar_head
 
 time target/$build/pkgar \
     extract \

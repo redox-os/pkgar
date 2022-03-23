@@ -84,6 +84,17 @@ fn main() {
             .about("Split archive into head and data files")
             .arg(&arg_pkey)
             .arg(&arg_archive)
+            .arg(
+                Arg::with_name("head")
+                    .help("Header file")
+                    .required(true)
+                    .value_name("head")
+            )
+            .arg(
+                Arg::with_name("data")
+                    .help("Data file")
+                    .value_name("data")
+            )
         )
         .get_matches();
 
@@ -113,7 +124,9 @@ fn main() {
     } else if let Some(matches) = matches.subcommand_matches("split") {
         split(
             matches.value_of("pkey").unwrap(),
-            matches.value_of("archive").unwrap()
+            matches.value_of("archive").unwrap(),
+            matches.value_of("head").unwrap(),
+            matches.value_of("data")
         )
     } else {
         Ok(())

@@ -251,6 +251,8 @@ pub fn list(
 pub fn split(
     pkey_path: impl AsRef<Path>,
     archive_path: impl AsRef<Path>,
+    head_path: impl AsRef<Path>,
+    data_path_opt: Option<impl AsRef<Path>>,
 ) -> Result<(), Error> {
     let pkey = PublicKeyFile::open(&pkey_path.as_ref())?.pkey;
 
@@ -258,36 +260,34 @@ pub fn split(
     let data_offset = package.header().total_size()?;
     let mut src = package.src.into_inner();
 
-    {
-        let data_path = archive_path.as_ref().with_extension("pkgar_data");
+    if let Some(data_path) = data_path_opt {
         let mut data_file = fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
             .open(&data_path)
-            .chain_err(|| &data_path )?;
+            .chain_err(|| data_path.as_ref() )?;
 
         src.seek(SeekFrom::Start(data_offset))
             .chain_err(|| archive_path.as_ref())?;
         io::copy(&mut src, &mut data_file)
             .chain_err(|| archive_path.as_ref())
-            .chain_err(|| &data_path)?;
+            .chain_err(|| data_path.as_ref())?;
     }
 
     {
-        let head_path = archive_path.as_ref().with_extension("pkgar_head");
         let mut head_file = fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
             .open(&head_path)
-            .chain_err(|| &head_path )?;
+            .chain_err(|| head_path.as_ref() )?;
 
         src.seek(SeekFrom::Start(0))
             .chain_err(|| archive_path.as_ref())?;
         io::copy(&mut src.take(data_offset), &mut head_file)
             .chain_err(|| archive_path.as_ref())
-            .chain_err(|| &head_path)?;
+            .chain_err(|| head_path.as_ref())?;
     }
 
     Ok(())
