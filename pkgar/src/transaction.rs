@@ -2,7 +2,7 @@ use std::io;
 use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{symlink, OpenOptionsExt};
+use std::os::unix::fs::{symlink, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 use blake3::Hash;
@@ -121,6 +121,15 @@ impl Transaction {
                         .open(&tmp_path)
                         .chain_err(|| tmp_path.as_path() )?;
                     
+                    // In MacOS, the setuid bit isn't set when creating a file, in spite
+                    // of being requested to so.
+                    if cfg!(target_os = "macos")  && mode.perm().bits() & 0o6000 == 0o6000 {
+                        let metadata = tmp_file.metadata()?;
+                        let mut permissions = metadata.permissions();
+                        permissions.set_mode(metadata.permissions().mode() | 0o6000);
+                        fs::set_permissions(&tmp_path, permissions)?;
+                    }
+
                     copy_and_hash(src.entry_reader(entry), &mut tmp_file, &mut buf)
                         .chain_err(|| &tmp_path )
                         .chain_err(|| format!("Copying entry to tempfile: '{}'", relative_path.display()) )?
