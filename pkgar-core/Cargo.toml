@@ -1,6 +1,6 @@
 [package]
 name = "pkgar-core"
-version = "0.1.0"
+version = "0.1.11"
 description = "Core Data Types for the Redox Package Archive"
 license = "MIT"
 authors = ["Jeremy Soller <jackpot51@gmail.com>", "Wesley Hershberger <mggmugginsmc@gmail.com>"]
@@ -11,4 +11,4 @@ edition = "2018"
 bitflags = "1.2.1"
 blake3 = { version = "0.3.6", default_features = false, features = ["rayon"] }
 plain = "0.2.3"
-sodiumoxide = { version = "=0.2.6", default_features = false }
+sodiumoxide = { version = "0.2.7", default_features = false }
