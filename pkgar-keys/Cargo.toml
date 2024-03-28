@@ -17,7 +17,7 @@ lazy_static = "1.4.0"
 seckey = "0.11.2"
 serde = { version = "1.0.115", default_features = false, features = ["derive"] }
 sodiumoxide = { version = "0.2.7", default_features = false }
-termion = "1.5.5"
+termion = "3"
 #thiserror = "1.0.20"
 toml = "0.5.6"
 user-error = "1.2.8"
