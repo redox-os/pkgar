@@ -1,6 +1,6 @@
 [package]
 name = "pkgar-core"
-version = "0.1.12"
+version = "0.1.13"
 description = "Core Data Types for the Redox Package Archive"
 license = "MIT"
 authors = ["Jeremy Soller <jackpot51@gmail.com>", "Wesley Hershberger <mggmugginsmc@gmail.com>"]
