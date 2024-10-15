@@ -1,6 +1,6 @@
 [package]
 name = "pkgar-repo"
-version = "0.1.13"
+version = "0.1.14"
 description = "Redox Package Repository"
 license = "MIT"
 authors = ["Jeremy Soller <jackpot51@gmail.com>"]
@@ -8,7 +8,7 @@ repository = "https://gitlab.redox-os.org/redox-os/pkgar"
 edition = "2018"
 
 [dependencies]
-pkgar = { version = "0.1.13", path = "../pkgar" }
-pkgar-core = { version = "0.1.13", path = "../pkgar-core" }
+pkgar = { version = "0.1.14", path = "../pkgar" }
+pkgar-core = { version = "0.1.14", path = "../pkgar-core" }
 reqwest = { version = "0.11.10", default_features = false, features = ["blocking", "rustls-tls"] }
 sodiumoxide = { version = "0.2.7", default_features = false }

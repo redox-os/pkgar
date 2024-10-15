@@ -1,6 +1,6 @@
 [package]
 name = "pkgar-keys"
-version = "0.1.13"
+version = "0.1.14"
 description = "Key management tool/library for pkgar"
 license = "MIT"
 authors = ["Wesley Hershberger <mggmugginsmc@gmail.com>"]
