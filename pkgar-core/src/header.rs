@@ -1,11 +1,11 @@
 //! The packed structs represent the on-disk format of pkgar
 
+use alloc::vec;
 use core::convert::TryFrom;
 use core::mem;
 use plain::Plain;
-use sodiumoxide::crypto::sign::{self, PublicKey};
 
-use crate::{Entry, Error};
+use crate::{dryoc::classic::crypto_sign::crypto_sign_open, Entry, Error, PublicKey};
 
 #[derive(Clone, Copy, Debug)]
 #[repr(packed)]
@@ -26,11 +26,13 @@ impl Header {
     /// Parse header from raw header data and verify using public key
     pub fn new<'a>(data: &'a [u8], public_key: &PublicKey) -> Result<&'a Header, Error> {
         // Retrieve signed header data
-        let signed = data.get(..mem::size_of::<Header>())
+        let signed = data
+            .get(..mem::size_of::<Header>())
             .ok_or(Error::Plain(plain::Error::TooShort))?;
 
-        let verified = sign::verify(signed, public_key)
-            .map_err(|_err| Error::InvalidSignature)?;
+        // Verify signature
+        let mut verified = vec![0; signed.len() - 64];
+        crypto_sign_open(&mut verified, signed, public_key)?;
 
         // Check that verified data matches signed data after skipping the signature
         if verified.as_slice() != &signed[64..] {
@@ -58,9 +60,7 @@ impl Header {
     /// Retrieve the size of the entries
     pub fn entries_size(&self) -> Result<u64, Error> {
         let entry_size = u64::try_from(mem::size_of::<Entry>())?;
-        self.count
-            .checked_mul(entry_size)
-            .ok_or(Error::Overflow)
+        self.count.checked_mul(entry_size).ok_or(Error::Overflow)
     }
 
     /// Retrieve the size of the Header and its entries
@@ -75,7 +75,8 @@ impl Header {
     pub fn entries<'a>(&self, data: &'a [u8]) -> Result<&'a [Entry], Error> {
         let entries_size = usize::try_from(self.entries_size()?)?;
 
-        let entries_data = data.get(..entries_size)
+        let entries_data = data
+            .get(..entries_size)
             .ok_or(Error::Plain(plain::Error::TooShort))?;
 
         let hash = {
@@ -83,7 +84,6 @@ impl Header {
             hasher.update_with_join::<blake3::join::RayonJoin>(&entries_data);
             hasher.finalize()
         };
-
 
         if &self.blake3 != hash.as_bytes() {
             return Err(Error::InvalidBlake3);
@@ -108,4 +108,3 @@ impl fmt::Debug for Header {
         )
     }
 }*/
-

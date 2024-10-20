@@ -2,11 +2,10 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use sodiumoxide::crypto::sign::PublicKey;
-use pkgar_core::{Header, HEADER_SIZE, PackageSrc};
+use pkgar_core::{Header, PackageSrc, PublicKey, HEADER_SIZE};
 
-use crate::{Error, ResultExt};
 use crate::ext::PackageSrcExt;
+use crate::{Error, ResultExt};
 
 #[derive(Debug)]
 pub struct PackageFile {
@@ -16,17 +15,14 @@ pub struct PackageFile {
 }
 
 impl PackageFile {
-    pub fn new(
-        path: impl AsRef<Path>,
-        public_key: &PublicKey
-    ) -> Result<PackageFile, Error> {
+    pub fn new(path: impl AsRef<Path>, public_key: &PublicKey) -> Result<PackageFile, Error> {
         let zeroes = [0; HEADER_SIZE];
         let path = path.as_ref().to_path_buf();
 
         let file = OpenOptions::new()
             .read(true)
             .open(&path)
-            .chain_err(|| &path )?;
+            .chain_err(|| &path)?;
 
         let mut new = PackageFile {
             path,

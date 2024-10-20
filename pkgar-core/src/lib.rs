@@ -5,6 +5,11 @@ use core::mem;
 
 use bitflags::bitflags;
 
+pub use dryoc::{
+    self,
+    classic::crypto_sign_ed25519::{PublicKey, SecretKey, Signature},
+};
+
 pub use crate::entry::Entry;
 pub use crate::error::Error;
 pub use crate::header::Header;
@@ -44,7 +49,7 @@ impl Mode {
 mod tests {
     use core::mem;
 
-    use crate::{Entry, ENTRY_SIZE, Header, HEADER_SIZE};
+    use crate::{Entry, Header, ENTRY_SIZE, HEADER_SIZE};
 
     #[test]
     fn header_size() {

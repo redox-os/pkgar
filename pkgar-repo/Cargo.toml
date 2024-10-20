@@ -10,5 +10,4 @@ edition = "2018"
 [dependencies]
 pkgar = { version = "0.1.14", path = "../pkgar" }
 pkgar-core = { version = "0.1.14", path = "../pkgar-core" }
-reqwest = { version = "0.11.10", default_features = false, features = ["blocking", "rustls-tls"] }
-sodiumoxide = { version = "0.2.7", default_features = false }
+reqwest = { version = "0.11.10", default-features = false, features = ["blocking", "rustls-tls"] }

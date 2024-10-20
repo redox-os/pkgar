@@ -4,11 +4,11 @@ use core::fmt::{Display, Formatter, Result};
 
 #[derive(Debug)]
 pub enum Error {
+    Dryoc(dryoc::Error),
     InvalidBlake3,
     InvalidData,
     InvalidKey,
     InvalidMode(u32),
-    InvalidSignature,
     Plain(plain::Error),
     Overflow,
     TryFromInt(core::num::TryFromIntError),
@@ -17,18 +17,24 @@ pub enum Error {
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter) -> Result {
         use Error::*;
-        
+
         let msg = match self {
+            Dryoc(err) => format!("Dryoc: {:?}", err),
             InvalidBlake3 => "Invalid Blake3".to_string(),
             InvalidData => "Data Invalid".to_string(),
             InvalidKey => "Key Invalid".to_string(),
             InvalidMode(mode) => format!("Invalid Mode: {:o}", mode),
-            InvalidSignature => "Invalid Signature".to_string(),
             Plain(err) => format!("Plain: {:?}", err),
             Overflow => "Overflow".to_string(),
             TryFromInt(err) => format!("TryFromInt: {}", err),
         };
         write!(f, "{}", msg)
+    }
+}
+
+impl From<dryoc::Error> for Error {
+    fn from(err: dryoc::Error) -> Error {
+        Error::Dryoc(err)
     }
 }
 
@@ -43,4 +49,3 @@ impl From<core::num::TryFromIntError> for Error {
         Error::TryFromInt(err)
     }
 }
-

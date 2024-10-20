@@ -1,14 +1,9 @@
 use std::process;
 
-use clap::{App, AppSettings, Arg, crate_authors, crate_description, crate_name, crate_version, SubCommand};
-use pkgar::{
-    create,
-    extract,
-    remove,
-    list,
-    split,
-    verify,
+use clap::{
+    crate_authors, crate_description, crate_name, crate_version, App, AppSettings, Arg, SubCommand,
 };
+use pkgar::{create, extract, list, remove, split, verify};
 use pkgar_keys::{DEFAULT_PUBKEY, DEFAULT_SECKEY};
 use user_error::UFE;
 
@@ -58,50 +53,52 @@ fn main() {
         .about(crate_description!())
         .version(crate_version!())
         .setting(AppSettings::SubcommandRequiredElseHelp)
-        .subcommand(SubCommand::with_name("create")
-            .about("Create archive")
-            .arg(&arg_skey)
-            .arg(&arg_archive)
-            .arg(&arg_basedir)
+        .subcommand(
+            SubCommand::with_name("create")
+                .about("Create archive")
+                .arg(&arg_skey)
+                .arg(&arg_archive)
+                .arg(&arg_basedir),
         )
-        .subcommand(SubCommand::with_name("extract")
-            .about("Extract archive")
-            .arg(&arg_pkey)
-            .arg(&arg_archive)
-            .arg(&arg_basedir)
+        .subcommand(
+            SubCommand::with_name("extract")
+                .about("Extract archive")
+                .arg(&arg_pkey)
+                .arg(&arg_archive)
+                .arg(&arg_basedir),
         )
-        .subcommand(SubCommand::with_name("list")
-            .about("List archive")
-            .arg(&arg_pkey)
-            .arg(&arg_archive)
+        .subcommand(
+            SubCommand::with_name("list")
+                .about("List archive")
+                .arg(&arg_pkey)
+                .arg(&arg_archive),
         )
-        .subcommand(SubCommand::with_name("remove")
-            .about("Unextract archive")
-            .arg(&arg_pkey)
-            .arg(&arg_archive)
-            .arg(&arg_basedir)
+        .subcommand(
+            SubCommand::with_name("remove")
+                .about("Unextract archive")
+                .arg(&arg_pkey)
+                .arg(&arg_archive)
+                .arg(&arg_basedir),
         )
-        .subcommand(SubCommand::with_name("split")
-            .about("Split archive into head and data files")
-            .arg(&arg_pkey)
-            .arg(&arg_archive)
-            .arg(
-                Arg::with_name("head")
-                    .help("Header file")
-                    .required(true)
-                    .value_name("head")
-            )
-            .arg(
-                Arg::with_name("data")
-                    .help("Data file")
-                    .value_name("data")
-            )
+        .subcommand(
+            SubCommand::with_name("split")
+                .about("Split archive into head and data files")
+                .arg(&arg_pkey)
+                .arg(&arg_archive)
+                .arg(
+                    Arg::with_name("head")
+                        .help("Header file")
+                        .required(true)
+                        .value_name("head"),
+                )
+                .arg(Arg::with_name("data").help("Data file").value_name("data")),
         )
-        .subcommand(SubCommand::with_name("verify")
-            .about("Verify archive")
-            .arg(&arg_pkey)
-            .arg(&arg_archive)
-            .arg(&arg_basedir)
+        .subcommand(
+            SubCommand::with_name("verify")
+                .about("Verify archive")
+                .arg(&arg_pkey)
+                .arg(&arg_archive)
+                .arg(&arg_basedir),
         )
         .get_matches();
 
@@ -109,13 +106,13 @@ fn main() {
         create(
             matches.value_of("skey").unwrap(),
             matches.value_of("archive").unwrap(),
-            matches.value_of("basedir").unwrap()
+            matches.value_of("basedir").unwrap(),
         )
     } else if let Some(matches) = matches.subcommand_matches("extract") {
         extract(
             matches.value_of("pkey").unwrap(),
             matches.value_of("archive").unwrap(),
-            matches.value_of("basedir").unwrap()
+            matches.value_of("basedir").unwrap(),
         )
     } else if let Some(matches) = matches.subcommand_matches("remove") {
         remove(
@@ -126,20 +123,20 @@ fn main() {
     } else if let Some(matches) = matches.subcommand_matches("list") {
         list(
             matches.value_of("pkey").unwrap(),
-            matches.value_of("archive").unwrap()
+            matches.value_of("archive").unwrap(),
         )
     } else if let Some(matches) = matches.subcommand_matches("split") {
         split(
             matches.value_of("pkey").unwrap(),
             matches.value_of("archive").unwrap(),
             matches.value_of("head").unwrap(),
-            matches.value_of("data")
+            matches.value_of("data"),
         )
     } else if let Some(matches) = matches.subcommand_matches("verify") {
         verify(
             matches.value_of("pkey").unwrap(),
             matches.value_of("archive").unwrap(),
-            matches.value_of("basedir").unwrap()
+            matches.value_of("basedir").unwrap(),
         )
     } else {
         Ok(())
