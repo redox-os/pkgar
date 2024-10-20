@@ -2,9 +2,9 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::convert::TryFrom;
 
-use sodiumoxide::crypto::sign::PublicKey;
+use dryoc::classic::crypto_sign_ed25519::PublicKey;
 
-use crate::{Entry, Error, HEADER_SIZE, Header};
+use crate::{Entry, Error, Header, HEADER_SIZE};
 
 pub trait PackageSrc {
     type Err: From<Error>;
@@ -26,10 +26,9 @@ pub trait PackageSrc {
 
     fn read_entries(&mut self) -> Result<Vec<Entry>, Self::Err> {
         let header = self.header();
-        let entries_size = header.entries_size()
-            .and_then(|rslt| usize::try_from(rslt)
-                .map_err(Error::TryFromInt)
-            )?;
+        let entries_size = header
+            .entries_size()
+            .and_then(|rslt| usize::try_from(rslt).map_err(Error::TryFromInt))?;
         let mut entries_data = vec![0; entries_size];
         self.read_at(HEADER_SIZE as u64, &mut entries_data)?;
         let entries = header.entries(&entries_data)?;
@@ -37,22 +36,24 @@ pub trait PackageSrc {
     }
 
     /// Read from this src at a given entry's data with a given offset within that entry
-    fn read_entry(&mut self, entry: Entry, offset: usize, buf: &mut [u8]) -> Result<usize, Self::Err> {
+    fn read_entry(
+        &mut self,
+        entry: Entry,
+        offset: usize,
+        buf: &mut [u8],
+    ) -> Result<usize, Self::Err> {
         if offset as u64 > entry.size {
             return Ok(0);
         }
 
-        let mut end = usize::try_from(entry.size - offset as u64)
-            .map_err(Error::TryFromInt)?;
+        let mut end = usize::try_from(entry.size - offset as u64).map_err(Error::TryFromInt)?;
 
         if end > buf.len() {
             end = buf.len();
         }
 
         let offset =
-            HEADER_SIZE as u64 +
-            self.header().entries_size()? +
-            entry.offset + offset as u64;
+            HEADER_SIZE as u64 + self.header().entries_size()? + entry.offset + offset as u64;
 
         self.read_at(offset as u64, &mut buf[..end])
     }
@@ -84,14 +85,12 @@ impl PackageSrc for PackageBuf<'_> {
     }
 
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, Error> {
-        let start = usize::try_from(offset)
-            .map_err(Error::TryFromInt)?;
+        let start = usize::try_from(offset).map_err(Error::TryFromInt)?;
         let len = self.src.len();
         if start >= len {
             return Ok(0);
         }
-        let mut end = start.checked_add(buf.len())
-            .ok_or(Error::Overflow)?;
+        let mut end = start.checked_add(buf.len()).ok_or(Error::Overflow)?;
         if end > len {
             end = len;
         }

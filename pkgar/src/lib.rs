@@ -21,20 +21,20 @@ error_chain! {
     types {
         Error, ErrorKind, ResultExt;
     }
-    
+
     links {
         Keys(pkgar_keys::Error, pkgar_keys::ErrorKind);
     }
-    
+
     foreign_links {
         Io(io::Error);
     }
-    
+
     errors {
         Core(src: pkgar_core::Error) {
             display("{}", src),
         }
-        
+
         FailedCommit(changed: usize, remaining: usize) {
             display(
                 "Failed to commit transaction. {} files changed, {} files remaining",
@@ -42,23 +42,23 @@ error_chain! {
                 remaining,
             ),
         }
-        
+
         InvalidPathComponent(path: PathBuf) {
             display("Invalid path component: {}", path.display()),
         }
-        
+
         LengthMismatch(actual: u64, expected: u64) {
             display("Entry size mismatch: expected {}, got {}", expected, actual),
         }
-        
+
         InvalidModeKind(mode: Mode) {
             display("Invalid Mode Kind: {:#o}", mode),
         }
-        
+
         Path(path: PathBuf) {
             display("Path: {}", path.display()),
         }
-        
+
         Entry(entry: Entry) {
             display("Entry: {:?}", entry),
         }
@@ -101,4 +101,3 @@ impl<T> ResultExt<T> for Result<T, pkgar_core::Error> {
         )
     }
 }*/
-

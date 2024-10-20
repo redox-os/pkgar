@@ -23,20 +23,19 @@ impl Entry {
     pub fn blake3(&self) -> Hash {
         Hash::from(self.blake3)
     }
-    
+
     pub fn offset(&self) -> u64 {
         self.offset
     }
-    
+
     pub fn size(&self) -> u64 {
         self.size
     }
-    
+
     pub fn mode(&self) -> Result<Mode, Error> {
-        Mode::from_bits(self.mode)
-            .ok_or(Error::InvalidMode(self.mode))
+        Mode::from_bits(self.mode).ok_or(Error::InvalidMode(self.mode))
     }
-    
+
     /// Retrieve the path, ending at the first NUL
     pub fn path_bytes(&self) -> &[u8] {
         let mut i = 0;
@@ -51,4 +50,3 @@ impl Entry {
 }
 
 unsafe impl Plain for Entry {}
-
