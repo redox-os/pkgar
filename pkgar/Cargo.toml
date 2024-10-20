@@ -12,7 +12,6 @@ error-chain = "0.12"
 plain = "0.2.3"
 pkgar-core = { version = "0.1.14", path = "../pkgar-core" }
 pkgar-keys = { version = "0.1.14", path = "../pkgar-keys" }
-sodiumoxide = { version = "0.2.7", default_features = false }
 #thiserror = "1.0.20"
 user-error = "1.2.8"
 
