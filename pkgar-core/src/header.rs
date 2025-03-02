@@ -41,7 +41,7 @@ impl Header {
 
         // Create header from signed data and check that public key matches
         let header: &Header = unsafe { Header::new_unchecked(signed)? };
-        if &header.public_key != &public_key.as_ref()[..] {
+        if header.public_key != public_key.as_ref()[..] {
             return Err(Error::InvalidKey);
         }
 
@@ -49,7 +49,7 @@ impl Header {
     }
 
     /// Parse header from raw header data without verification
-    pub unsafe fn new_unchecked<'a>(data: &'a [u8]) -> Result<&'a Header, Error> {
+    pub unsafe fn new_unchecked(data: &[u8]) -> Result<&Header, Error> {
         Ok(plain::from_bytes(data)?)
     }
 
@@ -81,7 +81,7 @@ impl Header {
 
         let hash = {
             let mut hasher = blake3::Hasher::new();
-            hasher.update_with_join::<blake3::join::RayonJoin>(&entries_data);
+            hasher.update_with_join::<blake3::join::RayonJoin>(entries_data);
             hasher.finalize()
         };
 
@@ -93,7 +93,7 @@ impl Header {
     }
 
     /// Parse entries from raw entries data without verification
-    pub unsafe fn entries_unchecked<'a>(data: &'a [u8]) -> Result<&'a [Entry], Error> {
+    pub unsafe fn entries_unchecked(data: &[u8]) -> Result<&[Entry], Error> {
         Ok(plain::slice_from_bytes(data)?)
     }
 }

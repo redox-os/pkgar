@@ -5,7 +5,7 @@ description = "Redox Package Archive"
 license = "MIT"
 authors = ["Jeremy Soller <jackpot51@gmail.com>", "Wesley Hershberger <mggmugginsmc@gmail.com>"]
 repository = "https://gitlab.redox-os.org/redox-os/pkgar"
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 error-chain = "0.12"

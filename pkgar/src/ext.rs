@@ -33,7 +33,7 @@ impl EntryExt for Entry {
                 }
             }
         }
-        Ok(&path)
+        Ok(path)
     }
 
     fn verify(&self, blake3: Hash, size: u64) -> Result<(), Error> {
