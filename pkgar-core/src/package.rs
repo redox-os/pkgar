@@ -20,8 +20,8 @@ pub trait PackageSrc {
     fn read_header(&mut self, public_key: &PublicKey) -> Result<Header, Self::Err> {
         let mut header_data = [0; HEADER_SIZE];
         self.read_at(0, &mut header_data)?;
-        let header = Header::new(&header_data, &public_key)?;
-        Ok(header.clone())
+        let header = Header::new(&header_data, public_key)?;
+        Ok(*header)
     }
 
     fn read_entries(&mut self) -> Result<Vec<Entry>, Self::Err> {
@@ -55,7 +55,7 @@ pub trait PackageSrc {
         let offset =
             HEADER_SIZE as u64 + self.header().entries_size()? + entry.offset + offset as u64;
 
-        self.read_at(offset as u64, &mut buf[..end])
+        self.read_at(offset, &mut buf[..end])
     }
 }
 
@@ -72,7 +72,7 @@ impl<'a> PackageBuf<'a> {
             src,
             header: unsafe { *Header::new_unchecked(&zeroes)? },
         };
-        new.header = *Header::new(&new.src, &public_key)?;
+        new.header = *Header::new(new.src, public_key)?;
         Ok(new)
     }
 }

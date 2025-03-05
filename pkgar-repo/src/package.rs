@@ -19,7 +19,7 @@ impl<'a> PackageUrl<'a> {
             client,
             url,
             // Need a blank header to construct the PackageFile, since we need to
-            //   use a method of PackageSrc in order to get the actual header...
+            // use a method of PackageSrc in order to get the actual header...
             header: unsafe { *Header::new_unchecked(&[0; HEADER_SIZE])? },
         };
         new.header = new.read_header(public_key)?;
@@ -27,7 +27,7 @@ impl<'a> PackageUrl<'a> {
     }
 }
 
-impl<'a> PackageSrc for PackageUrl<'a> {
+impl PackageSrc for PackageUrl<'_> {
     type Err = Error;
 
     fn header(&self) -> Header {

@@ -27,7 +27,7 @@ where
     for entry_res in fs::read_dir(path)? {
         read_dir.push(entry_res?);
     }
-    read_dir.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+    read_dir.sort_by_key(|path| path.file_name());
 
     for entry in read_dir {
         let metadata = entry.metadata()?;
@@ -87,15 +87,13 @@ pub fn create(
     archive_path: impl AsRef<Path>,
     folder: impl AsRef<Path>,
 ) -> Result<(), Error> {
-    let keyfile = pkgar_keys::get_skey(&secret_path.as_ref())?;
-    let secret_key = keyfile.secret_key().expect(&format!(
-        "{} was encrypted?",
-        secret_path.as_ref().display()
-    ));
-    let public_key = keyfile.public_key().expect(&format!(
-        "{} was encrypted?",
-        secret_path.as_ref().display()
-    ));
+    let keyfile = pkgar_keys::get_skey(secret_path.as_ref())?;
+    let secret_key = keyfile
+        .secret_key()
+        .unwrap_or_else(|| panic!("{} was encrypted?", secret_path.as_ref().display()));
+    let public_key = keyfile
+        .public_key()
+        .unwrap_or_else(|| panic!("{} was encrypted?", secret_path.as_ref().display()));
 
     //TODO: move functions to library
 
@@ -228,7 +226,7 @@ pub fn extract(
     archive_path: impl AsRef<Path>,
     base_dir: impl AsRef<Path>,
 ) -> Result<(), Error> {
-    let pkey = PublicKeyFile::open(&pkey_path.as_ref())?.pkey;
+    let pkey = PublicKeyFile::open(pkey_path.as_ref())?.pkey;
 
     let mut package = PackageFile::new(archive_path, &pkey)?;
 
@@ -242,7 +240,7 @@ pub fn remove(
     archive_path: impl AsRef<Path>,
     base_dir: impl AsRef<Path>,
 ) -> Result<(), Error> {
-    let pkey = PublicKeyFile::open(&pkey_path.as_ref())?.pkey;
+    let pkey = PublicKeyFile::open(pkey_path.as_ref())?.pkey;
 
     let mut package = PackageFile::new(archive_path, &pkey)?;
 
@@ -252,7 +250,7 @@ pub fn remove(
 }
 
 pub fn list(pkey_path: impl AsRef<Path>, archive_path: impl AsRef<Path>) -> Result<(), Error> {
-    let pkey = PublicKeyFile::open(&pkey_path.as_ref())?.pkey;
+    let pkey = PublicKeyFile::open(pkey_path.as_ref())?.pkey;
 
     let mut package = PackageFile::new(archive_path, &pkey)?;
     for entry in package.read_entries()? {
@@ -269,7 +267,7 @@ pub fn split(
     head_path: impl AsRef<Path>,
     data_path_opt: Option<impl AsRef<Path>>,
 ) -> Result<(), Error> {
-    let pkey = PublicKeyFile::open(&pkey_path.as_ref())?.pkey;
+    let pkey = PublicKeyFile::open(pkey_path.as_ref())?.pkey;
 
     let package = PackageFile::new(&archive_path, &pkey)?;
     let data_offset = package.header().total_size()?;
