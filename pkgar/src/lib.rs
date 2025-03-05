@@ -17,6 +17,7 @@ use user_error::UFE;
 
 const READ_WRITE_HASH_BUF_SIZE: usize = 4 * 1024 * 1024;
 
+// TODO: error-chain has been deprecated for five years in favor of anyhow
 error_chain! {
     types {
         Error, ErrorKind, ResultExt;
