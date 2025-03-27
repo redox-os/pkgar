@@ -134,7 +134,7 @@ impl SKey {
                 if skey_plain.len() != buf.len() {
                     return Err(ErrorKind::KeyInvalid.into());
                 }
-                buf.copy_from_slice(&skey_plain);
+                buf.copy_from_slice(skey_plain);
             }
             *self = SKey::Plain(buf);
         }
@@ -221,6 +221,7 @@ impl SecretKeyFile {
             OpenOptions::new()
                 .write(true)
                 .create(true)
+                .truncate(true)
                 .mode(0o600)
                 .open(&file)
                 .chain_err(|| file.as_ref())?,
@@ -251,7 +252,7 @@ impl SecretKeyFile {
     /// Returns `None` if the secret key is encrypted.
     pub fn secret_key(&self) -> Option<SecretKey> {
         match &self.skey {
-            SKey::Plain(skey) => Some(skey.clone()),
+            SKey::Plain(skey) => Some(*skey),
             SKey::Cipher(_) => None,
         }
     }
@@ -382,7 +383,7 @@ fn prompt_skey(skey_path: &Path, prompt: impl AsRef<str>) -> Result<SecretKeyFil
     let mut key_file = SecretKeyFile::open(skey_path)?;
 
     if key_file.is_encrypted() {
-        let passwd = Passwd::prompt(&format!("{} {}: ", prompt.as_ref(), skey_path.display()))
+        let passwd = Passwd::prompt(format!("{} {}: ", prompt.as_ref(), skey_path.display()))
             .chain_err(|| skey_path)?;
         key_file.decrypt(passwd).chain_err(|| skey_path)?;
     }

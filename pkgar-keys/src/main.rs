@@ -37,7 +37,7 @@ fn cli() -> Result<i32, Error> {
 
     let skey_path = matches
         .value_of("skey")
-        .map(|file| PathBuf::from(file))
+        .map(PathBuf::from)
         .unwrap_or(DEFAULT_SECKEY.clone());
 
     let (subcommand, submatches) = matches.subcommand();
@@ -46,21 +46,19 @@ fn cli() -> Result<i32, Error> {
     match subcommand {
         "gen" => {
             if let Some(keydir) = skey_path.parent() {
-                fs::create_dir_all(&keydir).chain_err(|| keydir)?;
+                fs::create_dir_all(keydir).chain_err(|| keydir)?;
             }
 
-            if !submatches.is_present("force") {
-                if skey_path.exists() {
-                    return Err(Error::from_kind(ErrorKind::Io(io::Error::from(
-                        io::ErrorKind::AlreadyExists,
-                    ))))
-                    .chain_err(|| &skey_path);
-                }
+            if !submatches.is_present("force") && skey_path.exists() {
+                return Err(Error::from_kind(ErrorKind::Io(io::Error::from(
+                    io::ErrorKind::AlreadyExists,
+                ))))
+                .chain_err(|| &skey_path);
             }
 
             let pkey_path = submatches
                 .value_of("pkey")
-                .map(|file| PathBuf::from(file))
+                .map(PathBuf::from)
                 .unwrap_or(DEFAULT_PUBKEY.clone());
 
             if !submatches.is_present("plaintext") {

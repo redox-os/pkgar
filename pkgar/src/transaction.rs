@@ -61,14 +61,14 @@ enum Action {
 impl Action {
     fn commit(&self) -> Result<(), Error> {
         match self {
-            Action::Rename(tmp, target) => fs::rename(&tmp, target).chain_err(|| tmp),
-            Action::Remove(target) => fs::remove_file(&target).chain_err(|| target),
+            Action::Rename(tmp, target) => fs::rename(tmp, target).chain_err(|| tmp),
+            Action::Remove(target) => fs::remove_file(target).chain_err(|| target),
         }
     }
 
     fn abort(&self) -> Result<(), Error> {
         match self {
-            Action::Rename(tmp, _) => fs::remove_file(&tmp).chain_err(|| tmp),
+            Action::Rename(tmp, _) => fs::remove_file(tmp).chain_err(|| tmp),
             Action::Remove(_) => Ok(()),
         }
     }
@@ -178,10 +178,9 @@ impl Transaction {
         let mut actions = old_entries
             .iter()
             .filter(|old_e| {
-                new_entries
+                !new_entries
                     .iter()
-                    .find(|new_e| new_e.blake3() == old_e.blake3())
-                    .is_none()
+                    .any(|new_e| new_e.blake3() == old_e.blake3())
             })
             .map(|e| {
                 let target_path = base_dir.as_ref().join(e.check_path()?);

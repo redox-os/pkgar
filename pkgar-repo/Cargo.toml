@@ -5,7 +5,7 @@ description = "Redox Package Repository"
 license = "MIT"
 authors = ["Jeremy Soller <jackpot51@gmail.com>"]
 repository = "https://gitlab.redox-os.org/redox-os/pkgar"
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 pkgar = { version = "0.1.16", path = "../pkgar" }
