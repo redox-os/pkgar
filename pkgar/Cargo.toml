@@ -1,6 +1,6 @@
 [package]
 name = "pkgar"
-version = "0.1.15"
+version = "0.1.16"
 description = "Redox Package Archive"
 license = "MIT"
 authors = ["Jeremy Soller <jackpot51@gmail.com>", "Wesley Hershberger <mggmugginsmc@gmail.com>"]
@@ -10,8 +10,8 @@ edition = "2018"
 [dependencies]
 error-chain = "0.12"
 plain = "0.2.3"
-pkgar-core = { version = "0.1.15", path = "../pkgar-core" }
-pkgar-keys = { version = "0.1.15", path = "../pkgar-keys" }
+pkgar-core = { version = "0.1.16", path = "../pkgar-core" }
+pkgar-keys = { version = "0.1.16", path = "../pkgar-keys" }
 #thiserror = "1.0.20"
 user-error = "1.2.8"
 
