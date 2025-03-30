@@ -4,6 +4,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
+use anyhow::Context;
 use pkgar_core::{
     dryoc::classic::crypto_sign::crypto_sign_detached, Entry, Header, Mode, PackageSrc,
 };
@@ -12,7 +13,7 @@ use pkgar_keys::PublicKeyFile;
 use crate::ext::{copy_and_hash, EntryExt};
 use crate::package::PackageFile;
 use crate::transaction::Transaction;
-use crate::{Error, ErrorKind, ResultExt, READ_WRITE_HASH_BUF_SIZE};
+use crate::{Error, READ_WRITE_HASH_BUF_SIZE};
 
 fn folder_entries<P, Q>(base: P, path: Q, entries: &mut Vec<Entry>) -> io::Result<()>
 where
@@ -86,7 +87,7 @@ pub fn create(
     secret_path: impl AsRef<Path>,
     archive_path: impl AsRef<Path>,
     folder: impl AsRef<Path>,
-) -> Result<(), Error> {
+) -> anyhow::Result<()> {
     let keyfile = pkgar_keys::get_skey(secret_path.as_ref())?;
     let secret_key = keyfile
         .secret_key()
@@ -97,18 +98,26 @@ pub fn create(
 
     //TODO: move functions to library
 
+    let archive_path = archive_path.as_ref();
     let mut archive_file = fs::OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
-        .open(&archive_path)
-        .chain_err(|| archive_path.as_ref())?;
+        .open(archive_path)
+        .map_err(|source| Error::Io {
+            source,
+            path: Some(archive_path.to_path_buf()),
+        })?;
 
     // Create a list of entries
     let mut entries = Vec::new();
-    folder_entries(&folder, &folder, &mut entries)
-        .chain_err(|| folder.as_ref())
-        .chain_err(|| "Recursing buildroot")?;
+    let folder = folder.as_ref();
+    folder_entries(folder, folder, &mut entries)
+        .map_err(|source| Error::Io {
+            source,
+            path: Some(folder.to_path_buf()),
+        })
+        .context("Recursing buildroot")?;
 
     // Create initial header
     let mut header = Header {
@@ -126,14 +135,27 @@ pub fn create(
             .checked_add(entry.size)
             .ok_or(pkgar_core::Error::Overflow)
             .map_err(Error::from)
-            .chain_err(|| ErrorKind::Entry(*entry))?;
+            .context("Overflowed processing entry offsets")
+            .with_context(|| {
+                let offset = entry.offset;
+                let size = entry.size;
+                format!(
+                    "Offset: {}, size: {}, path: {:?}",
+                    offset,
+                    size,
+                    entry.check_path().unwrap_or_else(|_| Path::new(""))
+                )
+            })?;
     }
 
     let data_offset = header.total_size()?;
     archive_file
         .seek(SeekFrom::Start(data_offset as u64))
-        .chain_err(|| archive_path.as_ref())
-        .chain_err(|| format!("Seek to {} (data offset)", data_offset))?;
+        .map_err(|source| Error::Io {
+            source,
+            path: Some(archive_path.to_path_buf()),
+        })
+        .with_context(|| format!("Seek to {} (data offset)", data_offset))?;
 
     //TODO: fallocate data_offset + data_size
 
@@ -142,43 +164,60 @@ pub fn create(
     let mut buf = vec![0; 4 * 1024 * 1024];
     for entry in &mut entries {
         let relative = entry.check_path()?;
-        let path = folder.as_ref().join(relative);
+        let path = folder.join(relative);
 
         let mode = entry
             .mode()
             .map_err(Error::from)
-            .chain_err(|| ErrorKind::Entry(*entry))?;
+            .with_context(|| path.display().to_string())?;
 
         let (total, hash) = match mode.kind() {
             Mode::FILE => {
-                let mut entry_file = fs::OpenOptions::new()
-                    .read(true)
-                    .open(&path)
-                    .chain_err(|| &path)?;
+                let mut entry_file =
+                    fs::OpenOptions::new()
+                        .read(true)
+                        .open(&path)
+                        .map_err(|source| Error::Io {
+                            source,
+                            path: Some(path.to_path_buf()),
+                        })?;
 
                 copy_and_hash(&mut entry_file, &mut archive_file, &mut buf)
-                    .chain_err(|| &path)
-                    .chain_err(|| format!("Writing entry to archive: '{}'", relative.display()))?
+                    .map_err(|source| Error::Io {
+                        source,
+                        path: Some(path.to_path_buf()),
+                    })
+                    .with_context(|| {
+                        format!("Writing entry to archive: '{}'", relative.display())
+                    })?
             }
             Mode::SYMLINK => {
-                let destination = fs::read_link(&path).chain_err(|| &path)?;
+                let destination = fs::read_link(&path).map_err(|source| Error::Io {
+                    source,
+                    path: Some(path.to_path_buf()),
+                })?;
 
                 let mut data = destination.as_os_str().as_bytes();
                 copy_and_hash(&mut data, &mut archive_file, &mut buf)
-                    .chain_err(|| &path)
-                    .chain_err(|| format!("Writing entry to archive: '{}'", relative.display()))?
+                    .map_err(|source| Error::Io {
+                        source,
+                        path: Some(path.to_path_buf()),
+                    })
+                    .with_context(|| {
+                        format!("Writing entry to archive: '{}'", relative.display())
+                    })?
             }
             _ => {
                 return Err(Error::from(pkgar_core::Error::InvalidMode(mode.bits())))
-                    .chain_err(|| ErrorKind::Entry(*entry))
+                    .with_context(|| path.display().to_string());
             }
         };
         if total != entry.size() {
-            return Err(Error::from_kind(ErrorKind::LengthMismatch(
-                total,
-                entry.size(),
-            )))
-            .chain_err(|| ErrorKind::Entry(*entry));
+            return Err(Error::LengthMismatch {
+                actual: total,
+                expected: entry.size(),
+            })
+            .with_context(|| path.display().to_string());
         }
         entry.blake3.copy_from_slice(hash.as_bytes());
 
@@ -203,19 +242,28 @@ pub fn create(
     // Write archive header
     archive_file
         .seek(SeekFrom::Start(0))
-        .chain_err(|| archive_path.as_ref())?;
+        .map_err(|source| Error::Io {
+            source,
+            path: Some(archive_path.to_path_buf()),
+        })?;
 
     archive_file
         .write_all(unsafe { plain::as_bytes(&header) })
-        .chain_err(|| archive_path.as_ref())?;
+        .map_err(|source| Error::Io {
+            source,
+            path: Some(archive_path.to_path_buf()),
+        })?;
 
     // Write each entry header
     for entry in &entries {
         let checked_path = entry.check_path()?;
         archive_file
             .write_all(unsafe { plain::as_bytes(entry) })
-            .chain_err(|| archive_path.as_ref())
-            .chain_err(|| format!("Write entry {}", checked_path.display()))?;
+            .map_err(|source| Error::Io {
+                source,
+                path: Some(archive_path.to_path_buf()),
+            })
+            .with_context(|| format!("Write entry {}", checked_path.display()))?;
     }
 
     Ok(())
@@ -225,7 +273,7 @@ pub fn extract(
     pkey_path: impl AsRef<Path>,
     archive_path: impl AsRef<Path>,
     base_dir: impl AsRef<Path>,
-) -> Result<(), Error> {
+) -> anyhow::Result<()> {
     let pkey = PublicKeyFile::open(pkey_path.as_ref())?.pkey;
 
     let mut package = PackageFile::new(archive_path, &pkey)?;
@@ -239,7 +287,7 @@ pub fn remove(
     pkey_path: impl AsRef<Path>,
     archive_path: impl AsRef<Path>,
     base_dir: impl AsRef<Path>,
-) -> Result<(), Error> {
+) -> anyhow::Result<()> {
     let pkey = PublicKeyFile::open(pkey_path.as_ref())?.pkey;
 
     let mut package = PackageFile::new(archive_path, &pkey)?;
@@ -266,26 +314,37 @@ pub fn split(
     archive_path: impl AsRef<Path>,
     head_path: impl AsRef<Path>,
     data_path_opt: Option<impl AsRef<Path>>,
-) -> Result<(), Error> {
-    let pkey = PublicKeyFile::open(pkey_path.as_ref())?.pkey;
+) -> anyhow::Result<()> {
+    let pkey_path = pkey_path.as_ref();
+    let archive_path = archive_path.as_ref();
+    let head_path = head_path.as_ref();
 
-    let package = PackageFile::new(&archive_path, &pkey)?;
+    let pkey = PublicKeyFile::open(pkey_path)?.pkey;
+
+    let package = PackageFile::new(archive_path, &pkey)?;
     let data_offset = package.header().total_size()?;
     let mut src = package.src.into_inner();
 
     if let Some(data_path) = data_path_opt {
+        let data_path = data_path.as_ref();
         let mut data_file = fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
-            .open(&data_path)
-            .chain_err(|| data_path.as_ref())?;
+            .open(data_path)
+            .map_err(|source| Error::Io {
+                source,
+                path: Some(data_path.to_path_buf()),
+            })?;
 
         src.seek(SeekFrom::Start(data_offset))
-            .chain_err(|| archive_path.as_ref())?;
+            .map_err(|source| Error::Io {
+                source,
+                path: Some(archive_path.to_path_buf()),
+            })?;
         io::copy(&mut src, &mut data_file)
-            .chain_err(|| archive_path.as_ref())
-            .chain_err(|| data_path.as_ref())?;
+            .with_context(|| format!("Archive path: {}", archive_path.display()))
+            .with_context(|| format!("Data path: {}", data_path.display()))?;
     }
 
     {
@@ -293,14 +352,19 @@ pub fn split(
             .write(true)
             .create(true)
             .truncate(true)
-            .open(&head_path)
-            .chain_err(|| head_path.as_ref())?;
+            .open(head_path)
+            .map_err(|source| Error::Io {
+                source,
+                path: Some(head_path.to_path_buf()),
+            })?;
 
-        src.seek(SeekFrom::Start(0))
-            .chain_err(|| archive_path.as_ref())?;
+        src.seek(SeekFrom::Start(0)).map_err(|source| Error::Io {
+            source,
+            path: Some(archive_path.to_path_buf()),
+        })?;
         io::copy(&mut src.take(data_offset), &mut head_file)
-            .chain_err(|| archive_path.as_ref())
-            .chain_err(|| head_path.as_ref())?;
+            .with_context(|| format!("Archive path: {}", archive_path.display()))
+            .with_context(|| format!("Head path: {}", head_path.display()))?;
     }
 
     Ok(())
@@ -319,9 +383,16 @@ pub fn verify(
     for entry in package.read_entries()? {
         let expected_path = base_dir.as_ref().join(entry.check_path()?);
 
-        let expected = File::open(&expected_path).chain_err(|| &expected_path)?;
+        let expected = File::open(&expected_path).map_err(|source| Error::Io {
+            source,
+            path: Some(expected_path.to_path_buf()),
+        })?;
 
-        let (count, hash) = copy_and_hash(expected, io::sink(), &mut buf)?;
+        let (count, hash) =
+            copy_and_hash(expected, io::sink(), &mut buf).map_err(|source| Error::Io {
+                source,
+                path: Some(expected_path.to_path_buf()),
+            })?;
 
         entry.verify(hash, count)?;
     }

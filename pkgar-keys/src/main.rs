@@ -1,17 +1,16 @@
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process;
 
+use anyhow::{Context, Result};
 use clap::clap_app;
-use user_error::UFE;
 
 use pkgar_keys::{
-    gen_keypair, get_skey, re_encrypt, Error, ErrorKind, ResultExt, SecretKeyFile, DEFAULT_PUBKEY,
-    DEFAULT_SECKEY,
+    gen_keypair, get_skey, re_encrypt, Error, SecretKeyFile, DEFAULT_PUBKEY, DEFAULT_SECKEY,
 };
 
-fn cli() -> Result<i32, Error> {
+fn cli() -> Result<i32> {
     let matches = clap_app!(("pkgar-keys") =>
         (author: "Wesley Hershberger <mggmugginsmc@gmail.com>")
         (about: "NaCl key management for pkgar")
@@ -46,14 +45,12 @@ fn cli() -> Result<i32, Error> {
     match subcommand {
         "gen" => {
             if let Some(keydir) = skey_path.parent() {
-                fs::create_dir_all(keydir).chain_err(|| keydir)?;
+                fs::create_dir_all(keydir).with_context(|| keydir.display().to_string())?;
             }
 
             if !submatches.is_present("force") && skey_path.exists() {
-                return Err(Error::from_kind(ErrorKind::Io(io::Error::from(
-                    io::ErrorKind::AlreadyExists,
-                ))))
-                .chain_err(|| &skey_path);
+                return Err(Error::Io(io::Error::from(io::ErrorKind::AlreadyExists)))
+                    .with_context(|| skey_path.display().to_string());
             }
 
             let pkey_path = submatches
@@ -78,8 +75,7 @@ fn cli() -> Result<i32, Error> {
             if let Some(file) = submatches.value_of("file") {
                 pkey.save(file)?;
             } else {
-                pkey.write(io::stdout().lock())
-                    .chain_err(|| Path::new("stdout"))?;
+                pkey.write(io::stdout().lock()).context("stdout")?;
             }
         }
         "rencrypt" => {
@@ -94,7 +90,7 @@ fn cli() -> Result<i32, Error> {
 
 fn main() {
     let code = cli().unwrap_or_else(|err| {
-        eprintln!("{}", err.into_ufe());
+        eprintln!("{err:?}");
         process::exit(1);
     });
     process::exit(code);
