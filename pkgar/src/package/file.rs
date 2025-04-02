@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use pkgar_core::{Header, PackageSrc, PublicKey, HEADER_SIZE};
 
 use crate::ext::PackageSrcExt;
-use crate::{Error, ResultExt};
+use crate::Error;
 
 #[derive(Debug)]
 pub struct PackageFile {
@@ -22,7 +22,10 @@ impl PackageFile {
         let file = OpenOptions::new()
             .read(true)
             .open(&path)
-            .chain_err(|| &path)?;
+            .map_err(|source| Error::Io {
+                source,
+                path: Some(path.clone()),
+            })?;
 
         let mut new = PackageFile {
             path,
@@ -46,8 +49,12 @@ impl PackageSrc for PackageFile {
     }
 
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Err> {
-        self.src.seek(SeekFrom::Start(offset))?;
-        self.src.read_exact(buf)?;
+        self.src
+            .seek(SeekFrom::Start(offset))
+            .map_err(|source| Error::Io { source, path: None })?;
+        self.src
+            .read_exact(buf)
+            .map_err(|source| Error::Io { source, path: None })?;
         Ok(buf.len())
     }
 }

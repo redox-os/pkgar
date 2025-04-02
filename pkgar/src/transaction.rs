@@ -5,18 +5,23 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{symlink, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
+use anyhow::Context;
 use blake3::Hash;
 use pkgar_core::{Mode, PackageSrc};
 
 use crate::ext::{copy_and_hash, EntryExt, PackageSrcExt};
-use crate::{Error, ErrorKind, ResultExt, READ_WRITE_HASH_BUF_SIZE};
+use crate::{Error, READ_WRITE_HASH_BUF_SIZE};
 
 fn file_exists(path: impl AsRef<Path>) -> Result<bool, Error> {
-    if let Err(err) = fs::metadata(&path) {
+    let path = path.as_ref();
+    if let Err(err) = fs::metadata(path) {
         if err.kind() == io::ErrorKind::NotFound {
             Ok(false)
         } else {
-            Err(Error::from(err).chain_err(|| path.as_ref()))
+            Err(Error::Io {
+                source: err,
+                path: Some(path.to_path_buf()),
+            })
         }
     } else {
         Ok(true)
@@ -47,8 +52,15 @@ fn temp_path(target_path: impl AsRef<Path>, entry_hash: Hash) -> Result<PathBuf,
 
     let parent_dir = target_path
         .parent()
-        .ok_or(ErrorKind::InvalidPathComponent(PathBuf::from("/")))?;
-    fs::create_dir_all(parent_dir).chain_err(|| parent_dir)?;
+        .ok_or_else(|| Error::InvalidPathComponent {
+            invalid: PathBuf::from("/"),
+            path: target_path.to_path_buf(),
+            entry: None,
+        })?;
+    fs::create_dir_all(parent_dir).map_err(|source| Error::Io {
+        source,
+        path: Some(parent_dir.to_path_buf()),
+    })?;
     Ok(parent_dir.join(tmp_name))
 }
 
@@ -61,14 +73,23 @@ enum Action {
 impl Action {
     fn commit(&self) -> Result<(), Error> {
         match self {
-            Action::Rename(tmp, target) => fs::rename(tmp, target).chain_err(|| tmp),
-            Action::Remove(target) => fs::remove_file(target).chain_err(|| target),
+            Action::Rename(tmp, target) => fs::rename(tmp, target).map_err(|source| Error::Io {
+                source,
+                path: Some(tmp.to_path_buf()),
+            }),
+            Action::Remove(target) => fs::remove_file(target).map_err(|source| Error::Io {
+                source,
+                path: Some(target.to_path_buf()),
+            }),
         }
     }
 
     fn abort(&self) -> Result<(), Error> {
         match self {
-            Action::Rename(tmp, _) => fs::remove_file(tmp).chain_err(|| tmp),
+            Action::Rename(tmp, _) => fs::remove_file(tmp).map_err(|source| Error::Io {
+                source,
+                path: Some(tmp.to_path_buf()),
+            }),
             Action::Remove(_) => Ok(()),
         }
     }
@@ -79,7 +100,7 @@ pub struct Transaction {
 }
 
 impl Transaction {
-    pub fn install<Pkg>(src: &mut Pkg, base_dir: impl AsRef<Path>) -> Result<Transaction, Error>
+    pub fn install<Pkg>(src: &mut Pkg, base_dir: impl AsRef<Path>) -> anyhow::Result<Transaction>
     where
         Pkg: PackageSrc<Err = Error> + PackageSrcExt,
     {
@@ -89,7 +110,9 @@ impl Transaction {
         let mut actions = Vec::with_capacity(entries.len());
 
         for entry in entries {
-            let relative_path = entry.check_path().chain_err(|| src.path())?;
+            let relative_path = entry
+                .check_path()
+                .with_context(|| format!("Source path: {}", src.path().display()))?;
 
             let target_path = base_dir.as_ref().join(relative_path);
             //HELP: Under what circumstances could this ever fail?
@@ -103,8 +126,8 @@ impl Transaction {
             let mode = entry
                 .mode()
                 .map_err(Error::from)
-                .chain_err(|| src.path())
-                .chain_err(|| ErrorKind::Entry(entry))?;
+                .with_context(|| format!("Package path: {}", src.path().display()))
+                .with_context(|| format!("Entry path: {:?}", entry.check_path().ok()))?;
 
             let (entry_data_size, entry_data_hash) = match mode.kind() {
                 Mode::FILE => {
@@ -115,20 +138,29 @@ impl Transaction {
                         .truncate(true)
                         .mode(mode.perm().bits())
                         .open(&tmp_path)
-                        .chain_err(|| tmp_path.as_path())?;
-
-                    let (size, hash) = copy_and_hash(src.entry_reader(entry), &mut tmp_file, &mut buf)
-                        .chain_err(|| &tmp_path)
-                        .chain_err(|| {
-                            format!("Copying entry to tempfile: '{}'", relative_path.display())
+                        .map_err(|source| Error::Io {
+                            source,
+                            path: Some(tmp_path.to_path_buf()),
                         })?;
+
+                    let (size, hash) =
+                        copy_and_hash(src.entry_reader(entry), &mut tmp_file, &mut buf)
+                            .map_err(|source| Error::Io {
+                                source,
+                                path: Some(tmp_path.to_path_buf()),
+                            })
+                            .with_context(|| {
+                                format!("Copying entry to tempfile: '{}'", relative_path.display())
+                            })?;
 
                     // The setuid bit is dropped when the file is written to, so set it again
                     if mode.perm().bits() & 0o6000 == 0o6000 {
                         let metadata = tmp_file.metadata()?;
                         let mut permissions = metadata.permissions();
                         permissions.set_mode(metadata.permissions().mode() | 0o6000);
-                        fs::set_permissions(&tmp_path, permissions)?;
+                        fs::set_permissions(&tmp_path, permissions).with_context(|| {
+                            format!("Setting missing setuid perms for: {}", tmp_path.display())
+                        })?;
                     }
 
                     (size, hash)
@@ -136,27 +168,33 @@ impl Transaction {
                 Mode::SYMLINK => {
                     let mut data = Vec::new();
                     let (size, hash) = copy_and_hash(src.entry_reader(entry), &mut data, &mut buf)
-                        .chain_err(|| &tmp_path)
-                        .chain_err(|| {
+                        .map_err(|source| Error::Io {
+                            source,
+                            path: Some(tmp_path.to_path_buf()),
+                        })
+                        .with_context(|| {
                             format!("Copying entry to tempfile: '{}'", relative_path.display())
                         })?;
 
                     let sym_target = Path::new(OsStr::from_bytes(&data));
                     symlink(sym_target, &tmp_path)
-                        .chain_err(|| sym_target)
-                        .chain_err(|| format!("Symlinking to {}", tmp_path.display()))?;
+                        .map_err(|source| Error::Io {
+                            source,
+                            path: Some(sym_target.to_path_buf()),
+                        })
+                        .with_context(|| format!("Symlinking to {}", tmp_path.display()))?;
                     (size, hash)
                 }
                 _ => {
                     return Err(Error::from(pkgar_core::Error::InvalidMode(mode.bits())))
-                        .chain_err(|| ErrorKind::Entry(entry))
-                        .chain_err(|| src.path());
+                        .with_context(|| src.path().display().to_string());
                 }
             };
 
             entry
                 .verify(entry_data_hash, entry_data_size)
-                .chain_err(|| src.path())?;
+                .with_context(|| format!("Package path: {}", src.path().display()))
+                .with_context(|| format!("Verifying entry: {:?}", entry.check_path().ok()))?;
 
             actions.push(Action::Rename(tmp_path, target_path))
         }
@@ -167,7 +205,7 @@ impl Transaction {
         old: &mut Pkg,
         new: &mut Pkg,
         base_dir: impl AsRef<Path>,
-    ) -> Result<Transaction, Error>
+    ) -> anyhow::Result<Transaction>
     where
         Pkg: PackageSrc<Err = Error> + PackageSrcExt,
     {
@@ -194,7 +232,7 @@ impl Transaction {
         Ok(trans)
     }
 
-    pub fn remove<Pkg>(pkg: &mut Pkg, base_dir: impl AsRef<Path>) -> Result<Transaction, Error>
+    pub fn remove<Pkg>(pkg: &mut Pkg, base_dir: impl AsRef<Path>) -> anyhow::Result<Transaction>
     where
         Pkg: PackageSrc<Err = Error>,
     {
@@ -213,12 +251,20 @@ impl Transaction {
                 "target path was not in the base path"
             );
 
-            let candidate = File::open(&target_path).chain_err(|| &target_path)?;
+            let candidate = File::open(&target_path).map_err(|source| Error::Io {
+                source,
+                path: Some(target_path.clone()),
+            })?;
 
             // Ensure that the deletion candidate on disk has not been modified
             copy_and_hash(candidate, io::sink(), &mut buf)
-                .chain_err(|| &target_path)
-                .chain_err(|| format!("Hashing file for entry: '{}'", relative_path.display()))?;
+                .map_err(|source| Error::Io {
+                    source,
+                    path: Some(target_path.clone()),
+                })
+                .with_context(|| {
+                    format!("Hashing file for entry: '{}'", relative_path.display())
+                })?;
 
             actions.push(Action::Remove(target_path));
         }
@@ -231,7 +277,11 @@ impl Transaction {
             if let Err(err) = action.commit() {
                 // Should be possible to restart a failed transaction
                 self.actions.push(action);
-                return Err(err.chain_err(|| ErrorKind::FailedCommit(count, self.actions.len())));
+                return Err(Error::FailedCommit {
+                    source: Box::new(err),
+                    changed: count,
+                    remaining: self.actions.len(),
+                });
             }
             count += 1;
         }
@@ -242,7 +292,7 @@ impl Transaction {
     /// Note that this function will check all actions and only after it has attempted
     /// to abort them all will it return an error with context info. Remaining actions
     /// are left as a part of this transaction to allow for re-runs of this function.
-    pub fn abort(&mut self) -> Result<usize, Error> {
+    pub fn abort(&mut self) -> anyhow::Result<usize> {
         let mut count = 0;
         let mut last_failed = false;
         while let Some(action) = self.actions.pop() {
@@ -250,9 +300,12 @@ impl Transaction {
                 // This is inherently inefficent, no biggie
                 self.actions.insert(0, action);
                 if last_failed {
-                    return Err(err
-                        .chain_err(|| ErrorKind::FailedCommit(count, self.actions.len()))
-                        .chain_err(|| "Abort triggered"));
+                    return Err(Error::FailedCommit {
+                        source: Box::new(err),
+                        changed: count,
+                        remaining: self.actions.len(),
+                    })
+                    .context("Abort triggered");
                 } else {
                     last_failed = true;
                 }
