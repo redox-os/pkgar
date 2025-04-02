@@ -7,7 +7,7 @@ use std::path::{Component, Path};
 use blake3::{Hash, Hasher};
 use pkgar_core::{Entry, PackageSrc};
 
-use crate::{Error, ErrorKind, ResultExt};
+use crate::Error;
 
 /// Handy associated functions for `pkgar_core::Entry` that depend on std
 pub trait EntryExt {
@@ -26,10 +26,11 @@ impl EntryExt for Entry {
                 Component::Normal(_) => {}
                 invalid => {
                     let bad_component: &Path = invalid.as_ref();
-                    return Err(Error::from_kind(ErrorKind::InvalidPathComponent(
-                        bad_component.to_path_buf(),
-                    )))
-                    .chain_err(|| ErrorKind::Entry(*self));
+                    return Err(Error::InvalidPathComponent {
+                        path: path.to_path_buf(),
+                        invalid: bad_component.to_path_buf(),
+                        entry: Some(Box::new(*self)),
+                    });
                 }
             }
         }
@@ -38,11 +39,10 @@ impl EntryExt for Entry {
 
     fn verify(&self, blake3: Hash, size: u64) -> Result<(), Error> {
         if size != self.size() {
-            Err(Error::from_kind(ErrorKind::LengthMismatch(
-                size,
-                self.size(),
-            )))
-            .chain_err(|| ErrorKind::Entry(*self))
+            Err(Error::LengthMismatch {
+                actual: size,
+                expected: self.size(),
+            })
         } else if blake3 != self.blake3() {
             Err(pkgar_core::Error::InvalidBlake3.into())
         } else {

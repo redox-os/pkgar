@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::ext::EntryExt;
-use crate::{Error, ResultExt};
+use crate::Error;
 
 #[derive(Debug)]
 pub struct PackageHead {
@@ -30,7 +30,10 @@ impl PackageHead {
         let file = OpenOptions::new()
             .read(true)
             .open(&head_path)
-            .chain_err(|| &head_path)?;
+            .map_err(|source| Error::Io {
+                source,
+                path: Some(head_path.clone()),
+            })?;
 
         let mut new = PackageHead {
             head_path,
@@ -55,9 +58,13 @@ impl PackageSrc for PackageHead {
     }
 
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Err> {
-        self.src.seek(SeekFrom::Start(offset))?;
-        self.src.read_exact(buf)?;
-        Ok(buf.len())
+        self.src
+            .seek(SeekFrom::Start(offset))
+            .map_err(|source| Error::Io { source, path: None })?;
+        self.src
+            .read_exact(buf)
+            .map_err(|source| Error::Io { source, path: None })
+            .map(|()| buf.len())
     }
 
     /// Read from this src at a given entry's data with a given offset within that entry
@@ -78,17 +85,28 @@ impl PackageSrc for PackageHead {
             end = buf.len();
         }
 
-        let relative_path = entry.check_path().chain_err(|| &self.head_path)?;
+        let relative_path = entry.check_path()?;
         let entry_path = self.root_path.join(relative_path);
         let mut entry_file = OpenOptions::new()
             .read(true)
             .open(&entry_path)
-            .chain_err(|| &entry_path)?;
+            .map_err(|source| Error::Io {
+                source,
+                path: Some(entry_path.clone()),
+            })?;
 
         entry_file
             .seek(SeekFrom::Start(offset as u64))
-            .chain_err(|| &entry_path)?;
+            .map_err(|source| Error::Io {
+                source,
+                path: Some(entry_path.clone()),
+            })?;
 
-        entry_file.read(&mut buf[..end]).chain_err(|| &entry_path)
+        entry_file
+            .read(&mut buf[..end])
+            .map_err(|source| Error::Io {
+                source,
+                path: Some(entry_path),
+            })
     }
 }

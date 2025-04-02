@@ -5,7 +5,7 @@ use core::convert::TryFrom;
 use core::mem;
 use plain::Plain;
 
-use crate::{dryoc::classic::crypto_sign::crypto_sign_open, Entry, Error, PublicKey};
+use crate::{dryoc::classic::crypto_sign::crypto_sign_open, error, Entry, Error, PublicKey};
 
 #[derive(Clone, Copy, Debug)]
 #[repr(packed)]
@@ -28,7 +28,7 @@ impl Header {
         // Retrieve signed header data
         let signed = data
             .get(..mem::size_of::<Header>())
-            .ok_or(Error::Plain(plain::Error::TooShort))?;
+            .ok_or(Error::Plain(error::PlainDelegate::TooShort))?;
 
         // Verify signature
         let mut verified = vec![0; signed.len() - 64];
@@ -77,7 +77,7 @@ impl Header {
 
         let entries_data = data
             .get(..entries_size)
-            .ok_or(Error::Plain(plain::Error::TooShort))?;
+            .ok_or(Error::Plain(error::PlainDelegate::TooShort))?;
 
         let hash = {
             let mut hasher = blake3::Hasher::new();

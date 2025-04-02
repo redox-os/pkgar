@@ -1,13 +1,10 @@
-use std::process;
-
 use clap::{
     crate_authors, crate_description, crate_name, crate_version, App, AppSettings, Arg, SubCommand,
 };
 use pkgar::{create, extract, list, remove, split, verify};
 use pkgar_keys::{DEFAULT_PUBKEY, DEFAULT_SECKEY};
-use user_error::UFE;
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     let (default_pkey, default_skey) = (
         DEFAULT_PUBKEY.to_string_lossy(),
         DEFAULT_SECKEY.to_string_lossy(),
@@ -102,7 +99,7 @@ fn main() {
         )
         .get_matches();
 
-    let res = if let Some(matches) = matches.subcommand_matches("create") {
+    if let Some(matches) = matches.subcommand_matches("create") {
         create(
             matches.value_of("skey").unwrap(),
             matches.value_of("archive").unwrap(),
@@ -125,6 +122,7 @@ fn main() {
             matches.value_of("pkey").unwrap(),
             matches.value_of("archive").unwrap(),
         )
+        .map_err(anyhow::Error::new)
     } else if let Some(matches) = matches.subcommand_matches("split") {
         split(
             matches.value_of("pkey").unwrap(),
@@ -138,15 +136,8 @@ fn main() {
             matches.value_of("archive").unwrap(),
             matches.value_of("basedir").unwrap(),
         )
+        .map_err(anyhow::Error::new)
     } else {
         Ok(())
-    };
-
-    match res {
-        Ok(()) => (),
-        Err(err) => {
-            eprintln!("{}", err.into_ufe());
-            process::exit(1);
-        }
     }
 }
