@@ -10,5 +10,5 @@ edition = "2021"
 [dependencies]
 bitflags = "1.2.1"
 blake3 = { version = "0.3.6", default-features = false, features = ["rayon"] }
+bytemuck = { version = "1", features = ["derive"] }
 dryoc = "0.6"
-plain = "0.2.3"

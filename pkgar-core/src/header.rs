@@ -1,14 +1,14 @@
 //! The packed structs represent the on-disk format of pkgar
 
 use alloc::vec;
+use bytemuck::{Pod, PodCastError, Zeroable};
 use core::convert::TryFrom;
 use core::mem;
-use plain::Plain;
 
-use crate::{dryoc::classic::crypto_sign::crypto_sign_open, error, Entry, Error, PublicKey};
+use crate::{dryoc::classic::crypto_sign::crypto_sign_open, Entry, Error, PublicKey};
 
-#[derive(Clone, Copy, Debug)]
-#[repr(packed)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+#[repr(packed, C)]
 pub struct Header {
     /// NaCl signature of header data
     pub signature: [u8; 64],
@@ -20,15 +20,13 @@ pub struct Header {
     pub count: u64,
 }
 
-unsafe impl Plain for Header {}
-
 impl Header {
     /// Parse header from raw header data and verify using public key
     pub fn new<'a>(data: &'a [u8], public_key: &PublicKey) -> Result<&'a Header, Error> {
         // Retrieve signed header data
         let signed = data
             .get(..mem::size_of::<Header>())
-            .ok_or(Error::Plain(error::PlainDelegate::TooShort))?;
+            .ok_or(Error::Cast(PodCastError::SizeMismatch))?;
 
         // Verify signature
         let mut verified = vec![0; signed.len() - 64];
@@ -50,7 +48,7 @@ impl Header {
 
     /// Parse header from raw header data without verification
     pub unsafe fn new_unchecked(data: &[u8]) -> Result<&Header, Error> {
-        Ok(plain::from_bytes(data)?)
+        Ok(bytemuck::try_from_bytes(data)?)
     }
 
     pub fn count(&self) -> u64 {
@@ -77,7 +75,7 @@ impl Header {
 
         let entries_data = data
             .get(..entries_size)
-            .ok_or(Error::Plain(error::PlainDelegate::TooShort))?;
+            .ok_or(Error::Cast(PodCastError::SizeMismatch))?;
 
         let hash = {
             let mut hasher = blake3::Hasher::new();
@@ -94,7 +92,7 @@ impl Header {
 
     /// Parse entries from raw entries data without verification
     pub unsafe fn entries_unchecked(data: &[u8]) -> Result<&[Entry], Error> {
-        Ok(plain::slice_from_bytes(data)?)
+        Ok(bytemuck::try_cast_slice(data)?)
     }
 }
 /*

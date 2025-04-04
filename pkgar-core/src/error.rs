@@ -5,12 +5,12 @@ use core::fmt::{Display, Formatter, Result};
 
 #[derive(Debug)]
 pub enum Error {
+    Cast(bytemuck::PodCastError),
     Dryoc(dryoc::Error),
     InvalidBlake3,
     InvalidData,
     InvalidKey,
     InvalidMode(u32),
-    Plain(PlainDelegate),
     Overflow,
     TryFromInt(core::num::TryFromIntError),
 }
@@ -25,7 +25,7 @@ impl Display for Error {
             InvalidData => "Data Invalid".to_string(),
             InvalidKey => "Key Invalid".to_string(),
             InvalidMode(mode) => format!("Invalid Mode: {:o}", mode),
-            Plain(err) => format!("Plain: {}", err),
+            Cast(err) => format!("Bytemuck: {}", err),
             Overflow => "Overflow".to_string(),
             TryFromInt(err) => format!("TryFromInt: {}", err),
         };
@@ -36,8 +36,9 @@ impl Display for Error {
 impl error::Error for Error {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match self {
+            // TODO: Bump bytemuck when new version has core Error patch 
+            // Self::Cast(e) => Some(e),
             Self::Dryoc(e) => Some(e),
-            Self::Plain(e) => Some(e),
             Self::TryFromInt(e) => Some(e),
             _ => None,
         }
@@ -50,42 +51,14 @@ impl From<dryoc::Error> for Error {
     }
 }
 
-impl From<plain::Error> for Error {
-    fn from(err: plain::Error) -> Error {
-        Error::Plain(err.into())
-    }
-}
-
 impl From<core::num::TryFromIntError> for Error {
     fn from(err: core::num::TryFromIntError) -> Error {
         Error::TryFromInt(err)
     }
 }
 
-/// Delegate type for [`plain::Error`] because it doesn't implement [`error::Error`]
-#[derive(Debug)]
-pub enum PlainDelegate {
-    TooShort,
-    BadAlignment,
-}
-
-impl Display for PlainDelegate {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        match *self {
-            Self::TooShort => write!(f, "Slice too short to construct type"),
-            Self::BadAlignment => write!(f, "Bytes incorrectly aligned for type"),
-        }
-    }
-}
-
-impl error::Error for PlainDelegate {}
-
-// TODO: plain is deprecated; use bytemuck
-impl From<plain::Error> for PlainDelegate {
-    fn from(error: plain::Error) -> Self {
-        match error {
-            plain::Error::TooShort => Self::TooShort,
-            plain::Error::BadAlignment => Self::BadAlignment,
-        }
+impl From<bytemuck::PodCastError> for Error {
+    fn from(err: bytemuck::PodCastError) -> Self {
+        Self::Cast(err)
     }
 }

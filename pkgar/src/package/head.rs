@@ -1,4 +1,5 @@
-use pkgar_core::{Entry, Header, PackageSrc, PublicKey, HEADER_SIZE};
+use bytemuck::Zeroable;
+use pkgar_core::{Entry, Header, PackageSrc, PublicKey};
 use std::{
     convert::TryFrom,
     fs::{File, OpenOptions},
@@ -23,7 +24,6 @@ impl PackageHead {
         root_path: impl AsRef<Path>,
         public_key: &PublicKey,
     ) -> Result<PackageHead, Error> {
-        let zeroes = [0; HEADER_SIZE];
         let head_path = head_path.as_ref().to_path_buf();
         let root_path = root_path.as_ref().to_path_buf();
 
@@ -42,7 +42,7 @@ impl PackageHead {
 
             // Need a blank header to construct the PackageHead, since we need to
             //   use a method of PackageSrc in order to get the actual header...
-            header: unsafe { *Header::new_unchecked(&zeroes)? },
+            header: Header::zeroed(),
         };
 
         new.header = new.read_header(public_key)?;

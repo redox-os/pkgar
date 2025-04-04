@@ -1,4 +1,4 @@
-use pkgar_core::{Header, PackageSrc, PublicKey, HEADER_SIZE};
+use pkgar_core::{Header, PackageSrc, PublicKey, Zeroable};
 use std::{convert::TryFrom, io::Read};
 
 use crate::Error;
@@ -20,7 +20,7 @@ impl<'a> PackageUrl<'a> {
             url,
             // Need a blank header to construct the PackageFile, since we need to
             // use a method of PackageSrc in order to get the actual header...
-            header: unsafe { *Header::new_unchecked(&[0; HEADER_SIZE])? },
+            header: Header::zeroed(),
         };
         new.header = new.read_header(public_key)?;
         Ok(new)

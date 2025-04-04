@@ -1,11 +1,11 @@
 //! The packed structs represent the on-disk format of pkgar
 use blake3::Hash;
-use plain::Plain;
+use bytemuck::{Pod, Zeroable};
 
 use crate::{Error, Mode};
 
-#[derive(Clone, Copy, Debug)]
-#[repr(packed)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+#[repr(packed, C)]
 pub struct Entry {
     /// Blake3 sum of the file data
     pub blake3: [u8; 32],
@@ -48,5 +48,3 @@ impl Entry {
         &self.path[..i]
     }
 }
-
-unsafe impl Plain for Entry {}
