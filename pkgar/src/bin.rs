@@ -221,8 +221,7 @@ pub fn create(
         }
         entry.blake3.copy_from_slice(hash.as_bytes());
 
-        header_hasher
-            .update_with_join::<blake3::join::RayonJoin>(unsafe { plain::as_bytes(entry) });
+        header_hasher.update_with_join::<blake3::join::RayonJoin>(bytemuck::bytes_of(entry));
     }
     header
         .blake3
@@ -233,7 +232,7 @@ pub fn create(
     let mut signature = [0; 64];
     crypto_sign_detached(
         &mut signature,
-        unsafe { &plain::as_bytes(&header)[64..] },
+        &bytemuck::bytes_of(&header)[64..],
         &secret_key,
     )
     .map_err(pkgar_core::Error::Dryoc)?;
@@ -248,7 +247,7 @@ pub fn create(
         })?;
 
     archive_file
-        .write_all(unsafe { plain::as_bytes(&header) })
+        .write_all(bytemuck::bytes_of(&header))
         .map_err(|source| Error::Io {
             source,
             path: Some(archive_path.to_path_buf()),
@@ -258,7 +257,7 @@ pub fn create(
     for entry in &entries {
         let checked_path = entry.check_path()?;
         archive_file
-            .write_all(unsafe { plain::as_bytes(entry) })
+            .write_all(bytemuck::bytes_of(entry))
             .map_err(|source| Error::Io {
                 source,
                 path: Some(archive_path.to_path_buf()),

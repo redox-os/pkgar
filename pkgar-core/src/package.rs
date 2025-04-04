@@ -1,5 +1,6 @@
 use alloc::vec;
 use alloc::vec::Vec;
+use bytemuck::Zeroable;
 use core::convert::TryFrom;
 
 use dryoc::classic::crypto_sign_ed25519::PublicKey;
@@ -67,10 +68,9 @@ pub struct PackageBuf<'a> {
 
 impl<'a> PackageBuf<'a> {
     pub fn new(src: &'a [u8], public_key: &PublicKey) -> Result<PackageBuf<'a>, Error> {
-        let zeroes = [0; HEADER_SIZE];
         let mut new = PackageBuf {
             src,
-            header: unsafe { *Header::new_unchecked(&zeroes)? },
+            header: Header::zeroed(),
         };
         new.header = *Header::new(new.src, public_key)?;
         Ok(new)
