@@ -10,6 +10,8 @@ pub use dryoc::{
     classic::crypto_sign_ed25519::{PublicKey, SecretKey, Signature},
 };
 
+pub use bytemuck::Zeroable;
+
 pub use crate::entry::Entry;
 pub use crate::error::Error;
 pub use crate::header::Header;

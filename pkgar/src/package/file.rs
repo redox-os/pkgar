@@ -2,7 +2,8 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use pkgar_core::{Header, PackageSrc, PublicKey, HEADER_SIZE};
+use bytemuck::Zeroable;
+use pkgar_core::{Header, PackageSrc, PublicKey};
 
 use crate::ext::PackageSrcExt;
 use crate::Error;
@@ -16,7 +17,6 @@ pub struct PackageFile {
 
 impl PackageFile {
     pub fn new(path: impl AsRef<Path>, public_key: &PublicKey) -> Result<PackageFile, Error> {
-        let zeroes = [0; HEADER_SIZE];
         let path = path.as_ref().to_path_buf();
 
         let file = OpenOptions::new()
@@ -33,7 +33,7 @@ impl PackageFile {
 
             // Need a blank header to construct the PackageFile, since we need to
             //   use a method of PackageSrc in order to get the actual header...
-            header: unsafe { *Header::new_unchecked(&zeroes)? },
+            header: Header::zeroed(),
         };
 
         new.header = new.read_header(public_key)?;
