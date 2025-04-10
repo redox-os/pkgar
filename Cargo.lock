@@ -126,6 +126,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1628fb46dfa0b37568d12e5edd512553eccf6a22a78e8bde00bb4aed84d5bdbf"
 
 [[package]]
+name = "bytemuck"
+version = "1.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6b1fc10dbac614ebc03540c9dbd60e83887fda27794998c6528f1782047d540"
+dependencies = [
+ "bytemuck_derive",
+]
+
+[[package]]
+name = "bytemuck_derive"
+version = "1.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ecc273b49b3205b83d648f0690daa588925572cc5063745bfe547fe7ec8e1a1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "bytes"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -950,11 +970,11 @@ version = "0.1.16"
 dependencies = [
  "anyhow",
  "blake3",
+ "bytemuck",
  "clap",
  "copy_dir",
  "pkgar-core",
  "pkgar-keys",
- "plain",
  "tempfile",
  "thiserror 2.0.12",
 ]
@@ -965,8 +985,8 @@ version = "0.1.16"
 dependencies = [
  "bitflags 1.3.2",
  "blake3",
+ "bytemuck",
  "dryoc",
- "plain",
 ]
 
 [[package]]
@@ -994,12 +1014,6 @@ dependencies = [
  "pkgar-core",
  "reqwest",
 ]
-
-[[package]]
-name = "plain"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "proc-macro2"
