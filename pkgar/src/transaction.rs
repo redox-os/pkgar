@@ -2,7 +2,7 @@ use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{symlink, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{symlink, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
@@ -152,16 +152,6 @@ impl Transaction {
                             .with_context(|| {
                                 format!("Copying entry to tempfile: '{}'", relative_path.display())
                             })?;
-
-                    // The setuid bit is dropped when the file is written to, so set it again
-                    if mode.perm().bits() & 0o6000 == 0o6000 {
-                        let metadata = tmp_file.metadata()?;
-                        let mut permissions = metadata.permissions();
-                        permissions.set_mode(metadata.permissions().mode() | 0o6000);
-                        fs::set_permissions(&tmp_path, permissions).with_context(|| {
-                            format!("Setting missing setuid perms for: {}", tmp_path.display())
-                        })?;
-                    }
 
                     (size, hash)
                 }
