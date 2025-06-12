@@ -75,6 +75,13 @@ impl Action {
     fn commit(&self) -> Result<(), Error> {
         match self {
             Action::Symlink(source, target) => {
+                // TODO: Not atomic, no way to do it until https://gitlab.redox-os.org/redox-os/relibc/-/issues/212 fixed
+                if target.exists() {
+                    fs::remove_file(target).map_err(|source| Error::Io {
+                        source,
+                        path: Some(target.to_path_buf()),
+                    })?;
+                }
                 symlink(&source, target).map_err(|source| Error::Io {
                     source,
                     path: Some(target.to_path_buf()),
@@ -172,7 +179,10 @@ impl Transaction {
                             path: Some(target_path.to_path_buf()),
                         })
                         .with_context(|| {
-                            format!("Symlinking entry to targetpath: '{}'", relative_path.display())
+                            format!(
+                                "Symlinking entry to targetpath: '{}'",
+                                relative_path.display()
+                            )
                         })?;
 
                     let sym_target = PathBuf::from(OsStr::from_bytes(&data));
