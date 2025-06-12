@@ -12,6 +12,7 @@ use crate::Error;
 
 #[derive(Debug)]
 pub struct PackageHead {
+    #[allow(dead_code)]
     head_path: PathBuf,
     root_path: PathBuf,
     pub(crate) src: BufReader<File>,
