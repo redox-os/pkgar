@@ -65,6 +65,7 @@ fn temp_path(target_path: impl AsRef<Path>, entry_hash: Hash) -> Result<PathBuf,
 }
 
 enum Action {
+    Symlink(PathBuf, PathBuf),
     /// Temp files (`.pkgar.*`) to target files
     Rename(PathBuf, PathBuf),
     Remove(PathBuf),
@@ -73,6 +74,12 @@ enum Action {
 impl Action {
     fn commit(&self) -> Result<(), Error> {
         match self {
+            Action::Symlink(source, target) => {
+                symlink(&source, target).map_err(|source| Error::Io {
+                    source,
+                    path: Some(target.to_path_buf()),
+                })
+            }
             Action::Rename(tmp, target) => fs::rename(tmp, target).map_err(|source| Error::Io {
                 source,
                 path: Some(tmp.to_path_buf()),
@@ -86,6 +93,7 @@ impl Action {
 
     fn abort(&self) -> Result<(), Error> {
         match self {
+            Action::Symlink(_, _) => Ok(()),
             Action::Rename(tmp, _) => fs::remove_file(tmp).map_err(|source| Error::Io {
                 source,
                 path: Some(tmp.to_path_buf()),
@@ -153,6 +161,7 @@ impl Transaction {
                                 format!("Copying entry to tempfile: '{}'", relative_path.display())
                             })?;
 
+                    actions.push(Action::Rename(tmp_path, target_path));
                     (size, hash)
                 }
                 Mode::SYMLINK => {
@@ -160,19 +169,15 @@ impl Transaction {
                     let (size, hash) = copy_and_hash(src.entry_reader(entry), &mut data, &mut buf)
                         .map_err(|source| Error::Io {
                             source,
-                            path: Some(tmp_path.to_path_buf()),
+                            path: Some(target_path.to_path_buf()),
                         })
                         .with_context(|| {
-                            format!("Copying entry to tempfile: '{}'", relative_path.display())
+                            format!("Symlinking entry to targetpath: '{}'", relative_path.display())
                         })?;
 
-                    let sym_target = Path::new(OsStr::from_bytes(&data));
-                    symlink(sym_target, &tmp_path)
-                        .map_err(|source| Error::Io {
-                            source,
-                            path: Some(sym_target.to_path_buf()),
-                        })
-                        .with_context(|| format!("Symlinking to {}", tmp_path.display()))?;
+                    let sym_target = PathBuf::from(OsStr::from_bytes(&data));
+
+                    actions.push(Action::Symlink(sym_target, target_path));
                     (size, hash)
                 }
                 _ => {
@@ -185,8 +190,6 @@ impl Transaction {
                 .verify(entry_data_hash, entry_data_size)
                 .with_context(|| format!("Package path: {}", src.path().display()))
                 .with_context(|| format!("Verifying entry: {:?}", entry.check_path().ok()))?;
-
-            actions.push(Action::Rename(tmp_path, target_path))
         }
         Ok(Transaction { actions })
     }
