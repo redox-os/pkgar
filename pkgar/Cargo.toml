@@ -1,6 +1,6 @@
 [package]
 name = "pkgar"
-version = "0.1.18"
+version = "0.1.19"
 description = "Redox Package Archive"
 license = "MIT"
 authors = ["Jeremy Soller <jackpot51@gmail.com>", "Wesley Hershberger <mggmugginsmc@gmail.com>"]
@@ -9,8 +9,8 @@ edition = "2021"
 
 [dependencies]
 bytemuck = { version = "1", features = ["derive"] }
-pkgar-core = { version = "0.1.18", path = "../pkgar-core" }
-pkgar-keys = { version = "0.1.18", path = "../pkgar-keys" }
+pkgar-core = { version = "0.1.19", path = "../pkgar-core" }
+pkgar-keys = { version = "0.1.19", path = "../pkgar-keys" }
 anyhow = "1"
 thiserror = "2"
 
