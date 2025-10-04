@@ -1,3 +1,6 @@
+//TODO: update clap to remove the need for this
+#![allow(dangerous_implicit_autorefs)]
+
 use clap::{
     crate_authors, crate_description, crate_name, crate_version, App, AppSettings, Arg, SubCommand,
 };
