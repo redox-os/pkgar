@@ -10,7 +10,7 @@ edition = "2021"
 
 [dependencies]
 clap = "2.33.3"
-dirs = "3.0.1"
+dirs = "6"
 hex = { version = "0.4.2", features = ["serde"] }
 lazy_static = "1.4.0"
 pkgar-core = { version = "0.1.19", path = "../pkgar-core" }
