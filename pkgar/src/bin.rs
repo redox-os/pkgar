@@ -123,7 +123,8 @@ pub fn create(
         signature: [0; 64],
         public_key,
         blake3: [0; 32],
-        count: entries.len() as u64,
+        count: entries.len() as u32,
+        flags: 0,
     };
 
     // Assign offsets to each entry

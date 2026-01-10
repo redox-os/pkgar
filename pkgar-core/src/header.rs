@@ -16,8 +16,10 @@ pub struct Header {
     pub public_key: [u8; 32],
     /// Blake3 sum of entry data
     pub blake3: [u8; 32],
-    /// Count of Entry structs, which immediately follow
-    pub count: u64,
+    /// Count of Entry structs, which starts immediately after header struct
+    pub count: u32,
+    /// Generic flags contain data and entry struct properties
+    pub flags: u32,
 }
 
 impl Header {
@@ -51,14 +53,16 @@ impl Header {
         Ok(bytemuck::try_from_bytes(data)?)
     }
 
-    pub fn count(&self) -> u64 {
+    pub fn count(&self) -> u32 {
         self.count
     }
 
     /// Retrieve the size of the entries
     pub fn entries_size(&self) -> Result<u64, Error> {
         let entry_size = u64::try_from(mem::size_of::<Entry>())?;
-        self.count.checked_mul(entry_size).ok_or(Error::Overflow)
+        u64::from(self.count)
+            .checked_mul(entry_size)
+            .ok_or(Error::Overflow)
     }
 
     /// Retrieve the size of the Header and its entries
