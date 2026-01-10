@@ -15,11 +15,11 @@ anyhow = "1"
 thiserror = "2"
 
 [dependencies.clap]
-version = "2.33.3"
+version = "2"
 optional = true
 
 [dependencies.blake3]
-version = "0.3.6"
+version = "1.8"
 default-features = false
 features = ["rayon"]
 

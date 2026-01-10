@@ -8,7 +8,7 @@ repository = "https://gitlab.redox-os.org/redox-os/pkgar"
 edition = "2021"
 
 [dependencies]
-bitflags = "1.2.1"
-blake3 = { version = "0.3.6", default-features = false, features = ["rayon"] }
-bytemuck = { version = "1", features = ["derive"] }
+bitflags = "2"
+blake3 = { version = "1.8", default-features = false, features = ["rayon"] }
+bytemuck = { version = "1", features = ["derive", "extern_crate_std"] }
 dryoc = "0.6"
