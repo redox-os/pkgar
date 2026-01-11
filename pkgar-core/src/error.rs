@@ -36,8 +36,7 @@ impl Display for Error {
 impl error::Error for Error {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match self {
-            // TODO: Bump bytemuck when new version has core Error patch 
-            // Self::Cast(e) => Some(e),
+            Self::Cast(e) => Some(e),
             Self::Dryoc(e) => Some(e),
             Self::TryFromInt(e) => Some(e),
             _ => None,

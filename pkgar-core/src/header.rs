@@ -79,7 +79,7 @@ impl Header {
 
         let hash = {
             let mut hasher = blake3::Hasher::new();
-            hasher.update_with_join::<blake3::join::RayonJoin>(entries_data);
+            hasher.update_rayon(entries_data);
             hasher.finalize()
         };
 

@@ -27,6 +27,7 @@ pub const ENTRY_SIZE: usize = mem::size_of::<Entry>();
 
 bitflags! {
     /// Ensures that all platforms use the same mode defines.
+     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct Mode: u32 {
         const PERM = 0o007777;
         const KIND = 0o170000;
