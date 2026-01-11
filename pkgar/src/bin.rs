@@ -221,7 +221,7 @@ pub fn create(
         }
         entry.blake3.copy_from_slice(hash.as_bytes());
 
-        header_hasher.update_with_join::<blake3::join::RayonJoin>(bytemuck::bytes_of(entry));
+        header_hasher.update_rayon(bytemuck::bytes_of(entry));
     }
     header
         .blake3

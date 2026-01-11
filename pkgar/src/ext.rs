@@ -114,7 +114,7 @@ pub(crate) fn copy_and_hash<R: Read, W: Write>(
             break;
         }
         written += count as u64;
-        hasher.update_with_join::<blake3::join::RayonJoin>(&buf[..count]);
+        hasher.update_rayon(&buf[..count]);
 
         write.write_all(&buf[..count])?;
     }

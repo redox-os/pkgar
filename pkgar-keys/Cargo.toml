@@ -9,7 +9,7 @@ readme = "README.md"
 edition = "2021"
 
 [dependencies]
-clap = "2.33.3"
+clap = "2"
 dirs = "6"
 hex = { version = "0.4.2", features = ["serde"] }
 lazy_static = "1.4.0"
