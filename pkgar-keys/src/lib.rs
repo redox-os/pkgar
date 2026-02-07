@@ -77,7 +77,7 @@ mod ser {
 
 /// Standard pkgar public key format definition. Use serde to serialize/deserialize
 /// files into this struct (helper methods available).
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct PublicKeyFile {
     #[serde(serialize_with = "hex::serialize", deserialize_with = "ser::to_pubkey")]
     pub pkey: PublicKey,
@@ -99,6 +99,14 @@ impl PublicKeyFile {
     /// Shortcut to write the public key to `file`
     pub fn save(&self, file: impl AsRef<Path>) -> Result<(), Error> {
         self.write(File::create(file)?)
+    }
+}
+
+impl std::fmt::Debug for PublicKeyFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.debug_struct("PublicKeyFile")
+            .field("pkey", &hex::encode(self.pkey))
+            .finish()
     }
 }
 
