@@ -7,26 +7,34 @@ authors = ["Jeremy Soller <jackpot51@gmail.com>", "Wesley Hershberger <mggmuggin
 repository = "https://gitlab.redox-os.org/redox-os/pkgar"
 edition = "2021"
 
+[[bin]]
+name = "pkgar"
+required-features = ["cli"]
+
 [dependencies]
-bytemuck = { version = "1", features = ["derive"] }
-pkgar-core = { version = "0.1.19", path = "../pkgar-core" }
-pkgar-keys = { version = "0.1.19", path = "../pkgar-keys" }
-anyhow = "1"
+bytemuck = {version = "1", features = ["derive"]}
+pkgar-core = {version = "0.1.19", path = "../pkgar-core"}
+pkgar-keys = {version = "0.1.19", path = "../pkgar-keys"}
 thiserror = "2"
 
 [dependencies.clap]
-version = "2"
 optional = true
+version = "2"
+
+[dependencies.anyhow]
+optional = true
+version = "1"
 
 [dependencies.blake3]
-version = "1.8"
 default-features = false
 features = ["rayon"]
+version = "1.8"
 
 [dev-dependencies]
 copy_dir = "0.1.2"
 tempfile = "3.1.0"
 
 [features]
-default = ["clap", "std"]
+default = ["std"]
+cli = ["clap", "anyhow", "std"]
 std = []

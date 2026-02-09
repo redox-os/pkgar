@@ -34,6 +34,7 @@ impl PackageHead {
             .map_err(|source| Error::Io {
                 source,
                 path: Some(head_path.clone()),
+                context: "Open",
             })?;
 
         let mut new = PackageHead {
@@ -61,10 +62,18 @@ impl PackageSrc for PackageHead {
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Err> {
         self.src
             .seek(SeekFrom::Start(offset))
-            .map_err(|source| Error::Io { source, path: None })?;
+            .map_err(|source| Error::Io {
+                source,
+                path: None,
+                context: "Seek",
+            })?;
         self.src
             .read_exact(buf)
-            .map_err(|source| Error::Io { source, path: None })
+            .map_err(|source| Error::Io {
+                source,
+                path: None,
+                context: "Read",
+            })
             .map(|()| buf.len())
     }
 
@@ -94,6 +103,7 @@ impl PackageSrc for PackageHead {
             .map_err(|source| Error::Io {
                 source,
                 path: Some(entry_path.clone()),
+                context: "Open",
             })?;
 
         entry_file
@@ -101,6 +111,7 @@ impl PackageSrc for PackageHead {
             .map_err(|source| Error::Io {
                 source,
                 path: Some(entry_path.clone()),
+                context: "Seek",
             })?;
 
         entry_file
@@ -108,6 +119,7 @@ impl PackageSrc for PackageHead {
             .map_err(|source| Error::Io {
                 source,
                 path: Some(entry_path),
+                context: "Read",
             })
     }
 }

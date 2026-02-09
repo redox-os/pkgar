@@ -25,6 +25,7 @@ impl PackageFile {
             .map_err(|source| Error::Io {
                 source,
                 path: Some(path.clone()),
+                context: "Open",
             })?;
 
         let mut new = PackageFile {
@@ -51,10 +52,16 @@ impl PackageSrc for PackageFile {
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Err> {
         self.src
             .seek(SeekFrom::Start(offset))
-            .map_err(|source| Error::Io { source, path: None })?;
-        self.src
-            .read_exact(buf)
-            .map_err(|source| Error::Io { source, path: None })?;
+            .map_err(|source| Error::Io {
+                source,
+                path: None,
+                context: "Seel",
+            })?;
+        self.src.read_exact(buf).map_err(|source| Error::Io {
+            source,
+            path: None,
+            context: "Read",
+        })?;
         Ok(buf.len())
     }
 }
