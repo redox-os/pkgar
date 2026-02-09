@@ -47,21 +47,21 @@ The size of the header struct is 136 bytes. All fields are packed.
 
 The data flags represent what data it contained, stored as 32 bitflags.
 
-- bit 0-8, enumeration from 0-255 represent the data and entry struct version:
+- bit 0-7, enumeration from 0-255 represent the data and entry struct version:
   - `0`: initial version
   - others: reserved
-- bit 9-16, enumeration from 0-255 represent the binary achitecture it contains:
+- bit 8-15, enumeration from 0-255 represent the binary achitecture it contains:
   - `0`: architecture-independent
   - `1`: x86_64, base arch (x86_64-v1)
   - `2`: 32 bit x86, base arch (i586)
   - `3`: aarch64, base arch (Armv8-A)
   - `4`: riscv64, base arch (extension GC)
   - others: reserved
-- bit 17-24, enumeration from 0-255 represent how the data file is packaged:
+- bit 16-23, enumeration from 0-255 represent how the data file is packaged:
   - `0`: not compressed
   - `1`: LZMA, whole data file compression
   - others: reserved
-- bit 25-31, reserved
+- bit 24-31, reserved
 
 #### Entry Struct
 
