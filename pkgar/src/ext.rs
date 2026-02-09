@@ -1,11 +1,12 @@
 //! Extention traits for base types defined in `pkgar-core`.
 use std::ffi::OsStr;
+use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path};
 
 use blake3::{Hash, Hasher};
-use pkgar_core::{Entry, PackageSrc};
+use pkgar_core::{Entry, PackageSrc, Packaging};
 
 use crate::Error;
 
@@ -119,4 +120,37 @@ pub(crate) fn copy_and_hash<R: Read, W: Write>(
         write.write_all(&buf[..count])?;
     }
     Ok((written, hasher.finalize()))
+}
+
+pub enum PackagingWriter {
+    Uncompressed(File),
+    LZMA(lzma_rust2::Lzma2Writer<File>),
+}
+
+impl Write for PackagingWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            PackagingWriter::Uncompressed(file) => file.write(buf),
+            PackagingWriter::LZMA(xz_encoder) => xz_encoder.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            PackagingWriter::Uncompressed(file) => file.flush(),
+            PackagingWriter::LZMA(xz_encoder) => xz_encoder.flush(),
+        }
+    }
+}
+
+impl PackagingWriter {
+    pub fn new(header: Packaging, file: File) -> Self {
+        match header {
+            Packaging::LZMA => Self::LZMA(lzma_rust2::Lzma2Writer::new(
+                file,
+                lzma_rust2::Lzma2Options::with_preset(5),
+            )),
+            _ => Self::Uncompressed(file),
+        }
+    }
 }

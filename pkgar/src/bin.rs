@@ -7,9 +7,10 @@ use std::path::Path;
 use pkgar_core::{
     dryoc::classic::crypto_sign::crypto_sign_detached, Entry, Header, Mode, PackageSrc,
 };
+use pkgar_core::HeaderFlags;
 use pkgar_keys::PublicKeyFile;
 
-use crate::ext::{copy_and_hash, EntryExt};
+use crate::ext::{copy_and_hash, EntryExt, PackagingWriter};
 use crate::package::PackageFile;
 use crate::transaction::Transaction;
 use crate::{Error, READ_WRITE_HASH_BUF_SIZE};
@@ -87,6 +88,15 @@ pub fn create(
     archive_path: impl AsRef<Path>,
     folder: impl AsRef<Path>,
 ) -> Result<(), Error> {
+    create_with_flags(secret_path, archive_path, folder, HeaderFlags::default())
+}
+
+pub fn create_with_flags(
+    secret_path: impl AsRef<Path>,
+    archive_path: impl AsRef<Path>,
+    folder: impl AsRef<Path>,
+    flags: HeaderFlags,
+) -> Result<(), Error> {
     let keyfile = pkgar_keys::get_skey(secret_path.as_ref())?;
     let secret_key = keyfile
         .secret_key()
@@ -124,7 +134,7 @@ pub fn create(
         public_key,
         blake3: [0; 32],
         count: entries.len() as u32,
-        flags: 0,
+        flags,
     };
 
     // Assign offsets to each entry
@@ -148,6 +158,15 @@ pub fn create(
 
     //TODO: fallocate data_offset + data_size
 
+    let mut archive_data = PackagingWriter::new(
+        flags.packaging(),
+        archive_file.try_clone().map_err(|source| Error::Io {
+            source,
+            path: Some(archive_path.to_path_buf()),
+            context: "Clone FD",
+        })?,
+    );
+
     // Stream each file, writing data and calculating b3sums
     let mut header_hasher = blake3::Hasher::new();
     let mut buf = vec![0; 4 * 1024 * 1024];
@@ -169,7 +188,7 @@ pub fn create(
                             context: "Opening entry data",
                         })?;
 
-                copy_and_hash(&mut entry_file, &mut archive_file, &mut buf).map_err(|source| {
+                copy_and_hash(&mut entry_file, &mut archive_data, &mut buf).map_err(|source| {
                     Error::Io {
                         source,
                         path: Some(path.to_path_buf()),
