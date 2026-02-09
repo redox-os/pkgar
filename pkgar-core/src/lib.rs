@@ -14,11 +14,13 @@ pub use bytemuck::Zeroable;
 
 pub use crate::entry::Entry;
 pub use crate::error::Error;
+pub use crate::flags::{Architecture, DataVersion, HeaderFlags, Packaging};
 pub use crate::header::Header;
 pub use crate::package::{PackageBuf, PackageSrc};
 
 mod entry;
 mod error;
+mod flags;
 mod header;
 mod package;
 
