@@ -5,7 +5,6 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{symlink, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
 use blake3::Hash;
 use pkgar_core::{Mode, PackageSrc};
 
@@ -21,6 +20,7 @@ fn file_exists(path: impl AsRef<Path>) -> Result<bool, Error> {
             Err(Error::Io {
                 source: err,
                 path: Some(path.to_path_buf()),
+                context: "Checking file",
             })
         }
     } else {
@@ -60,12 +60,12 @@ fn temp_path(target_path: impl AsRef<Path>, entry_hash: Hash) -> Result<PathBuf,
     fs::create_dir_all(parent_dir).map_err(|source| Error::Io {
         source,
         path: Some(parent_dir.to_path_buf()),
+        context: "Creating dir",
     })?;
     Ok(parent_dir.join(tmp_name))
 }
 
 enum Action {
-    Symlink(PathBuf, PathBuf),
     /// Temp files (`.pkgar.*`) to target files
     Rename(PathBuf, PathBuf),
     Remove(PathBuf),
@@ -74,36 +74,25 @@ enum Action {
 impl Action {
     fn commit(&self) -> Result<(), Error> {
         match self {
-            Action::Symlink(source, target) => {
-                // TODO: Not atomic, no way to do it until https://gitlab.redox-os.org/redox-os/relibc/-/issues/212 fixed
-                if target.exists() {
-                    fs::remove_file(target).map_err(|source| Error::Io {
-                        source,
-                        path: Some(target.to_path_buf()),
-                    })?;
-                }
-                symlink(&source, target).map_err(|source| Error::Io {
-                    source,
-                    path: Some(target.to_path_buf()),
-                })
-            }
             Action::Rename(tmp, target) => fs::rename(tmp, target).map_err(|source| Error::Io {
                 source,
                 path: Some(tmp.to_path_buf()),
+                context: "Renaming file",
             }),
             Action::Remove(target) => fs::remove_file(target).map_err(|source| Error::Io {
                 source,
                 path: Some(target.to_path_buf()),
+                context: "Removing file",
             }),
         }
     }
 
     fn abort(&self) -> Result<(), Error> {
         match self {
-            Action::Symlink(_, _) => Ok(()),
             Action::Rename(tmp, _) => fs::remove_file(tmp).map_err(|source| Error::Io {
                 source,
                 path: Some(tmp.to_path_buf()),
+                context: "Removing tempfile",
             }),
             Action::Remove(_) => Ok(()),
         }
@@ -115,7 +104,7 @@ pub struct Transaction {
 }
 
 impl Transaction {
-    pub fn install<Pkg>(src: &mut Pkg, base_dir: impl AsRef<Path>) -> anyhow::Result<Transaction>
+    pub fn install<Pkg>(src: &mut Pkg, base_dir: impl AsRef<Path>) -> Result<Self, Error>
     where
         Pkg: PackageSrc<Err = Error> + PackageSrcExt,
     {
@@ -125,9 +114,7 @@ impl Transaction {
         let mut actions = Vec::with_capacity(entries.len());
 
         for entry in entries {
-            let relative_path = entry
-                .check_path()
-                .with_context(|| format!("Source path: {}", src.path().display()))?;
+            let relative_path = entry.check_path()?;
 
             let target_path = base_dir.as_ref().join(relative_path);
             //HELP: Under what circumstances could this ever fail?
@@ -138,11 +125,7 @@ impl Transaction {
 
             let tmp_path = temp_path(&target_path, entry.blake3())?;
 
-            let mode = entry
-                .mode()
-                .map_err(Error::from)
-                .with_context(|| format!("Package path: {}", src.path().display()))
-                .with_context(|| format!("Entry path: {:?}", entry.check_path().ok()))?;
+            let mode = entry.mode().map_err(Error::from)?;
 
             let (entry_data_size, entry_data_hash) = match mode.kind() {
                 Mode::FILE => {
@@ -156,17 +139,17 @@ impl Transaction {
                         .map_err(|source| Error::Io {
                             source,
                             path: Some(tmp_path.to_path_buf()),
+                            context: "Opening tempfile",
                         })?;
 
                     let (size, hash) =
-                        copy_and_hash(src.entry_reader(entry), &mut tmp_file, &mut buf)
-                            .map_err(|source| Error::Io {
+                        copy_and_hash(src.entry_reader(entry), &mut tmp_file, &mut buf).map_err(
+                            |source| Error::Io {
                                 source,
                                 path: Some(tmp_path.to_path_buf()),
-                            })
-                            .with_context(|| {
-                                format!("Copying entry to tempfile: '{}'", relative_path.display())
-                            })?;
+                                context: "Copying entry to tempfile",
+                            },
+                        )?;
 
                     actions.push(Action::Rename(tmp_path, target_path));
                     (size, hash)
@@ -176,30 +159,25 @@ impl Transaction {
                     let (size, hash) = copy_and_hash(src.entry_reader(entry), &mut data, &mut buf)
                         .map_err(|source| Error::Io {
                             source,
-                            path: Some(target_path.to_path_buf()),
-                        })
-                        .with_context(|| {
-                            format!(
-                                "Symlinking entry to targetpath: '{}'",
-                                relative_path.display()
-                            )
+                            path: Some(tmp_path.to_path_buf()),
+                            context: "Copying entry to tempfile",
                         })?;
 
-                    let sym_target = PathBuf::from(OsStr::from_bytes(&data));
-
-                    actions.push(Action::Symlink(sym_target, target_path));
+                    let sym_target = Path::new(OsStr::from_bytes(&data));
+                    symlink(sym_target, &tmp_path).map_err(|source| Error::Io {
+                        source,
+                        path: Some(sym_target.to_path_buf()),
+                        context: "Symlinking to tmp",
+                    })?;
+                    actions.push(Action::Rename(tmp_path, target_path));
                     (size, hash)
                 }
                 _ => {
-                    return Err(Error::from(pkgar_core::Error::InvalidMode(mode.bits())))
-                        .with_context(|| src.path().display().to_string());
+                    return Err(Error::from(pkgar_core::Error::InvalidMode(mode.bits())));
                 }
             };
 
-            entry
-                .verify(entry_data_hash, entry_data_size)
-                .with_context(|| format!("Package path: {}", src.path().display()))
-                .with_context(|| format!("Verifying entry: {:?}", entry.check_path().ok()))?;
+            entry.verify(entry_data_hash, entry_data_size)?;
         }
         Ok(Transaction { actions })
     }
@@ -208,7 +186,7 @@ impl Transaction {
         old: &mut Pkg,
         new: &mut Pkg,
         base_dir: impl AsRef<Path>,
-    ) -> anyhow::Result<Transaction>
+    ) -> Result<Transaction, Error>
     where
         Pkg: PackageSrc<Err = Error> + PackageSrcExt,
     {
@@ -235,7 +213,7 @@ impl Transaction {
         Ok(trans)
     }
 
-    pub fn remove<Pkg>(pkg: &mut Pkg, base_dir: impl AsRef<Path>) -> anyhow::Result<Transaction>
+    pub fn remove<Pkg>(pkg: &mut Pkg, base_dir: impl AsRef<Path>) -> Result<Transaction, Error>
     where
         Pkg: PackageSrc<Err = Error>,
     {
@@ -257,17 +235,15 @@ impl Transaction {
             let candidate = File::open(&target_path).map_err(|source| Error::Io {
                 source,
                 path: Some(target_path.clone()),
+                context: "Opening candidate",
             })?;
 
             // Ensure that the deletion candidate on disk has not been modified
-            copy_and_hash(candidate, io::sink(), &mut buf)
-                .map_err(|source| Error::Io {
-                    source,
-                    path: Some(target_path.clone()),
-                })
-                .with_context(|| {
-                    format!("Hashing file for entry: '{}'", relative_path.display())
-                })?;
+            copy_and_hash(candidate, io::sink(), &mut buf).map_err(|source| Error::Io {
+                source,
+                path: Some(target_path.clone()),
+                context: "Hashing file for entry",
+            })?;
 
             actions.push(Action::Remove(target_path));
         }
@@ -295,7 +271,7 @@ impl Transaction {
     /// Note that this function will check all actions and only after it has attempted
     /// to abort them all will it return an error with context info. Remaining actions
     /// are left as a part of this transaction to allow for re-runs of this function.
-    pub fn abort(&mut self) -> anyhow::Result<usize> {
+    pub fn abort(&mut self) -> Result<usize, Error> {
         let mut count = 0;
         let mut last_failed = false;
         while let Some(action) = self.actions.pop() {
@@ -307,8 +283,7 @@ impl Transaction {
                         source: Box::new(err),
                         changed: count,
                         remaining: self.actions.len(),
-                    })
-                    .context("Abort triggered");
+                    });
                 } else {
                     last_failed = true;
                 }

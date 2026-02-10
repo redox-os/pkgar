@@ -88,6 +88,7 @@ fn cli() -> Result<i32> {
     Ok(0)
 }
 
+#[cfg(feature = "cli")]
 fn main() {
     let code = cli().unwrap_or_else(|err| {
         eprintln!("{err:?}");

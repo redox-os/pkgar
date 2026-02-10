@@ -11,9 +11,9 @@ rm -rf target/test
 mkdir -p target/test
 
 if [[ "$build" == debug ]]; then
-    cargo build
+    cargo build --all-features
 else
-    cargo build --release
+    cargo build --release --all-features
 fi
 
 time target/$build/pkgar-keys gen \

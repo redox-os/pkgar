@@ -20,11 +20,12 @@ pub enum Error {
     Core(#[from] pkgar_core::Error),
     #[error(transparent)]
     Keys(#[from] pkgar_keys::Error),
-    #[error("{source} ({path:?})")]
+    #[error("{source} ({path:?}) {context:?}")]
     Io {
         #[source]
         source: io::Error,
         path: Option<PathBuf>,
+        context: &'static str,
     },
     #[error("Failed to commit transaction. {changed} files changed; {remaining} files remaining")]
     FailedCommit {

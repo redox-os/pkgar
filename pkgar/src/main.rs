@@ -108,18 +108,21 @@ fn main() -> anyhow::Result<()> {
             matches.value_of("archive").unwrap(),
             matches.value_of("basedir").unwrap(),
         )
+        .map_err(anyhow::Error::new)
     } else if let Some(matches) = matches.subcommand_matches("extract") {
         extract(
             matches.value_of("pkey").unwrap(),
             matches.value_of("archive").unwrap(),
             matches.value_of("basedir").unwrap(),
         )
+        .map_err(anyhow::Error::new)
     } else if let Some(matches) = matches.subcommand_matches("remove") {
         remove(
             matches.value_of("pkey").unwrap(),
             matches.value_of("archive").unwrap(),
             matches.value_of("basedir").unwrap(),
         )
+        .map_err(anyhow::Error::new)
     } else if let Some(matches) = matches.subcommand_matches("list") {
         list(
             matches.value_of("pkey").unwrap(),
@@ -133,6 +136,7 @@ fn main() -> anyhow::Result<()> {
             matches.value_of("head").unwrap(),
             matches.value_of("data"),
         )
+        .map_err(anyhow::Error::new)
     } else if let Some(matches) = matches.subcommand_matches("verify") {
         verify(
             matches.value_of("pkey").unwrap(),
