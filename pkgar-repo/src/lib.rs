@@ -31,7 +31,11 @@ impl fmt::Display for Error {
 
 impl From<std::io::Error> for Error {
     fn from(source: std::io::Error) -> Self {
-        Self::Pkgar(Box::new(pkgar::Error::Io { source, path: None }))
+        Self::Pkgar(Box::new(pkgar::Error::Io {
+            source,
+            path: None,
+            context: "Generic Err",
+        }))
     }
 }
 

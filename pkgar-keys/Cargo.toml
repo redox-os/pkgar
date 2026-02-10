@@ -8,8 +8,12 @@ repository = "https://gitlab.redox-os.org/redox-os/pkgar"
 readme = "README.md"
 edition = "2021"
 
+[[bin]]
+name = "pkgar-keys"
+required-features = ["cli"]
+
 [dependencies]
-clap = "2"
+clap = { version = "2", optional = true }
 dirs = "6"
 hex = { version = "0.4.2", features = ["serde"] }
 lazy_static = "1.4.0"
@@ -18,5 +22,9 @@ seckey = "0.11.2"
 serde = { version = "1", default-features = false, features = ["derive"] }
 termion = "4"
 toml = "0.8"
-anyhow = "1"
+anyhow = { version = "1", optional = true }
 thiserror = "2"
+
+[features]
+default = []
+cli = ["clap", "anyhow"]
