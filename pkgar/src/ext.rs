@@ -124,21 +124,21 @@ pub(crate) fn copy_and_hash<R: Read, W: Write>(
 
 pub enum PackagingWriter {
     Uncompressed(File),
-    LZMA(lzma_rust2::Lzma2Writer<File>),
+    LZMA2(lzma_rust2::Lzma2Writer<File>),
 }
 
 impl Write for PackagingWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self {
             PackagingWriter::Uncompressed(file) => file.write(buf),
-            PackagingWriter::LZMA(xz_encoder) => xz_encoder.write(buf),
+            PackagingWriter::LZMA2(xz_encoder) => xz_encoder.write(buf),
         }
     }
 
     fn flush(&mut self) -> io::Result<()> {
         match self {
             PackagingWriter::Uncompressed(file) => file.flush(),
-            PackagingWriter::LZMA(xz_encoder) => xz_encoder.flush(),
+            PackagingWriter::LZMA2(xz_encoder) => xz_encoder.flush(),
         }
     }
 }
@@ -146,11 +146,18 @@ impl Write for PackagingWriter {
 impl PackagingWriter {
     pub fn new(header: Packaging, file: File) -> Self {
         match header {
-            Packaging::LZMA => Self::LZMA(lzma_rust2::Lzma2Writer::new(
+            Packaging::LZMA2 => Self::LZMA2(lzma_rust2::Lzma2Writer::new(
                 file,
                 lzma_rust2::Lzma2Options::with_preset(5),
             )),
             _ => Self::Uncompressed(file),
+        }
+    }
+
+    pub fn finish(self) -> std::io::Result<File> {
+        match self {
+            PackagingWriter::Uncompressed(file) => Ok(file),
+            PackagingWriter::LZMA2(xz_encoder) => xz_encoder.finish(),
         }
     }
 }

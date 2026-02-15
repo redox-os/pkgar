@@ -4,10 +4,10 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
+use pkgar_core::HeaderFlags;
 use pkgar_core::{
     dryoc::classic::crypto_sign::crypto_sign_detached, Entry, Header, Mode, PackageSrc,
 };
-use pkgar_core::HeaderFlags;
 use pkgar_keys::PublicKeyFile;
 
 use crate::ext::{copy_and_hash, EntryExt, PackagingWriter};
@@ -158,14 +158,7 @@ pub fn create_with_flags(
 
     //TODO: fallocate data_offset + data_size
 
-    let mut archive_data = PackagingWriter::new(
-        flags.packaging(),
-        archive_file.try_clone().map_err(|source| Error::Io {
-            source,
-            path: Some(archive_path.to_path_buf()),
-            context: "Clone FD",
-        })?,
-    );
+    let mut archive_data = PackagingWriter::new(flags.packaging(), archive_file);
 
     // Stream each file, writing data and calculating b3sums
     let mut header_hasher = blake3::Hasher::new();
@@ -204,7 +197,7 @@ pub fn create_with_flags(
                 })?;
 
                 let mut data = destination.as_os_str().as_bytes();
-                copy_and_hash(&mut data, &mut archive_file, &mut buf).map_err(|source| {
+                copy_and_hash(&mut data, &mut archive_data, &mut buf).map_err(|source| {
                     Error::Io {
                         source,
                         path: Some(path.to_path_buf()),
@@ -216,6 +209,7 @@ pub fn create_with_flags(
                 return Err(Error::from(pkgar_core::Error::InvalidMode(mode.bits())));
             }
         };
+
         if total != entry.size() {
             return Err(Error::LengthMismatch {
                 actual: total,
@@ -226,6 +220,13 @@ pub fn create_with_flags(
 
         header_hasher.update_rayon(bytemuck::bytes_of(entry));
     }
+
+    let mut archive_file = archive_data.finish().map_err(|source| Error::Io {
+        source,
+        path: None,
+        context: "Can't finalize compress",
+    })?;
+
     header
         .blake3
         .copy_from_slice(header_hasher.finalize().as_bytes());

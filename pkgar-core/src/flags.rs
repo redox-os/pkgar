@@ -25,7 +25,7 @@ pub enum Architecture {
 #[repr(u8)]
 pub enum Packaging {
     Uncompressed = 0,
-    LZMA = 1,
+    LZMA2 = 1,
     Reserved(u8),
 }
 
@@ -40,6 +40,10 @@ impl HeaderFlags {
         bits |= (Self::val_arch(arch) as u32) << 8;
         bits |= (Self::val_pkg(pkg) as u32) << 16;
         Self(bits)
+    }
+
+    pub fn latest(arch: Architecture, pkg: Packaging) -> Self {
+        Self::new(DataVersion::V0, arch, pkg)
     }
 
     pub fn version(&self) -> DataVersion {
@@ -63,7 +67,7 @@ impl HeaderFlags {
     pub fn packaging(&self) -> Packaging {
         match (self.0 >> 16) as u8 {
             0 => Packaging::Uncompressed,
-            1 => Packaging::LZMA,
+            1 => Packaging::LZMA2,
             v => Packaging::Reserved(v),
         }
     }
@@ -87,7 +91,7 @@ impl HeaderFlags {
     fn val_pkg(p: Packaging) -> u8 {
         match p {
             Packaging::Uncompressed => 0,
-            Packaging::LZMA => 1,
+            Packaging::LZMA2 => 1,
             Packaging::Reserved(n) => n,
         }
     }

@@ -59,7 +59,7 @@ The data flags represent what data it contained, stored as 32 bitflags.
   - others: reserved
 - bit 16-23, enumeration from 0-255 represent how the data file is packaged:
   - `0`: not compressed
-  - `1`: LZMA, whole data file compression
+  - `1`: LZMA2, whole data file compression
   - others: reserved
 - bit 24-31, reserved
 
