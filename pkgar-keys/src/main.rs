@@ -3,14 +3,13 @@ use std::io;
 use std::path::PathBuf;
 use std::process;
 
-use anyhow::{Context, Result};
 use clap::clap_app;
 
 use pkgar_keys::{
     gen_keypair, get_skey, re_encrypt, Error, SecretKeyFile, DEFAULT_PUBKEY, DEFAULT_SECKEY,
 };
 
-fn cli() -> Result<i32> {
+fn cli() -> Result<i32, Error> {
     let matches = clap_app!(("pkgar-keys") =>
         (author: "Wesley Hershberger <mggmugginsmc@gmail.com>")
         (about: "NaCl key management for pkgar")
@@ -45,12 +44,19 @@ fn cli() -> Result<i32> {
     match subcommand {
         "gen" => {
             if let Some(keydir) = skey_path.parent() {
-                fs::create_dir_all(keydir).with_context(|| keydir.display().to_string())?;
+                fs::create_dir_all(&keydir).map_err(|source| Error::Io {
+                    source,
+                    path: Some(keydir.to_path_buf()),
+                    context: "Creating directory",
+                })?;
             }
 
             if !submatches.is_present("force") && skey_path.exists() {
-                return Err(Error::Io(io::Error::from(io::ErrorKind::AlreadyExists)))
-                    .with_context(|| skey_path.display().to_string());
+                return Err(Error::Io {
+                    source: std::io::Error::from(std::io::ErrorKind::AlreadyExists),
+                    path: Some(skey_path),
+                    context: "Key already exist",
+                });
             }
 
             let pkey_path = submatches
@@ -75,7 +81,7 @@ fn cli() -> Result<i32> {
             if let Some(file) = submatches.value_of("file") {
                 pkey.save(file)?;
             } else {
-                pkey.write(io::stdout().lock()).context("stdout")?;
+                pkey.write(io::stdout().lock())?;
             }
         }
         "rencrypt" => {
@@ -88,10 +94,9 @@ fn cli() -> Result<i32> {
     Ok(0)
 }
 
-#[cfg(feature = "cli")]
 fn main() {
     let code = cli().unwrap_or_else(|err| {
-        eprintln!("{err:?}");
+        eprintln!("error: {err:?}");
         process::exit(1);
     });
     process::exit(code);

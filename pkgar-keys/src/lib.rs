@@ -86,19 +86,31 @@ pub struct PublicKeyFile {
 impl PublicKeyFile {
     /// Parse a `PublicKeyFile` from `file` (in toml format).
     pub fn open(file: impl AsRef<Path>) -> Result<PublicKeyFile, Error> {
-        let content = fs::read_to_string(file)?;
+        let content = fs::read_to_string(file).map_err(|source| Error::Io {
+            source,
+            path: None,
+            context: "Reading public key",
+        })?;
         toml::from_str(&content).map_err(Error::Deser)
     }
 
     /// Write `self` serialized as toml to `w`.
     pub fn write(&self, mut w: impl Write) -> Result<(), Error> {
         w.write_all(toml::to_string(self)?.as_bytes())
-            .map_err(Error::Io)
+            .map_err(|source| Error::Io {
+                source,
+                path: None,
+                context: "Writing public key",
+            })
     }
 
     /// Shortcut to write the public key to `file`
     pub fn save(&self, file: impl AsRef<Path>) -> Result<(), Error> {
-        self.write(File::create(file)?)
+        self.write(File::create(file).map_err(|source| Error::Io {
+            source,
+            path: None,
+            context: "Writing public key",
+        })?)
     }
 }
 
@@ -209,13 +221,22 @@ impl SecretKeyFile {
 
     /// Parse a `SecretKeyFile` from `file` (in toml format).
     pub fn open(file: impl AsRef<Path>) -> Result<SecretKeyFile, Error> {
-        let content = fs::read_to_string(file)?;
+        let content = fs::read_to_string(&file).map_err(|source| Error::Io {
+            source,
+            path: Some(file.as_ref().to_path_buf()),
+            context: "Reading secret",
+        })?;
         toml::from_str(&content).map_err(Error::Deser)
     }
 
     /// Write `self` serialized as toml to `w`.
     pub fn write(&self, mut w: impl Write) -> Result<(), Error> {
-        w.write_all(toml::to_string(&self)?.as_bytes())?;
+        w.write_all(toml::to_string(&self)?.as_bytes())
+            .map_err(|source| Error::Io {
+                source,
+                path: None,
+                context: "Writing secret",
+            })?;
         Ok(())
     }
 
@@ -230,7 +251,12 @@ impl SecretKeyFile {
                 .create(true)
                 .truncate(true)
                 .mode(0o600)
-                .open(file)?,
+                .open(&file)
+                .map_err(|source| Error::Io {
+                    source,
+                    path: Some(file.as_ref().to_path_buf()),
+                    context: "Opening file",
+                })?,
         )
     }
 
@@ -304,15 +330,32 @@ impl Passwd {
         let stdin = stdin();
         let mut stdin = stdin.lock();
 
-        stdout.write_all(prompt.as_ref().as_bytes())?;
-        stdout.flush()?;
+        stdout
+            .write_all(prompt.as_ref().as_bytes())
+            .map_err(|source| Error::Io {
+                source,
+                path: None,
+                context: "Writing prompt",
+            })?;
+        stdout.flush().map_err(|source| Error::Io {
+            source,
+            path: None,
+            context: "Flushing prompt",
+        })?;
 
-        let mut passwd = stdin
-            .read_passwd(&mut stdout)?
-            .ok_or(Error::Io(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "Invalid Password Input",
-            )))?;
+        let Some(mut passwd) = stdin.read_passwd(&mut stdout).map_err(|source| Error::Io {
+            source,
+            path: None,
+            context: "Reading passwd",
+        })?
+        else {
+            return Err(Error::Io {
+                source: std::io::Error::from(io::ErrorKind::UnexpectedEof),
+                path: None,
+                context: "Invalid Password Input",
+            });
+        };
+
         println!();
 
         Ok(Passwd::new(&mut passwd))
