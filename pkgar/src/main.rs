@@ -4,10 +4,10 @@
 use clap::{
     crate_authors, crate_description, crate_name, crate_version, App, AppSettings, Arg, SubCommand,
 };
-use pkgar::{create, extract, list, remove, split, verify};
+use pkgar::{create, extract, list, remove, split, verify, Error};
 use pkgar_keys::{DEFAULT_PUBKEY, DEFAULT_SECKEY};
 
-fn main() -> anyhow::Result<()> {
+fn cli() -> Result<(), Error> {
     let (default_pkey, default_skey) = (
         DEFAULT_PUBKEY.to_string_lossy(),
         DEFAULT_SECKEY.to_string_lossy(),
@@ -108,27 +108,23 @@ fn main() -> anyhow::Result<()> {
             matches.value_of("archive").unwrap(),
             matches.value_of("basedir").unwrap(),
         )
-        .map_err(anyhow::Error::new)
     } else if let Some(matches) = matches.subcommand_matches("extract") {
         extract(
             matches.value_of("pkey").unwrap(),
             matches.value_of("archive").unwrap(),
             matches.value_of("basedir").unwrap(),
         )
-        .map_err(anyhow::Error::new)
     } else if let Some(matches) = matches.subcommand_matches("remove") {
         remove(
             matches.value_of("pkey").unwrap(),
             matches.value_of("archive").unwrap(),
             matches.value_of("basedir").unwrap(),
         )
-        .map_err(anyhow::Error::new)
     } else if let Some(matches) = matches.subcommand_matches("list") {
         list(
             matches.value_of("pkey").unwrap(),
             matches.value_of("archive").unwrap(),
         )
-        .map_err(anyhow::Error::new)
     } else if let Some(matches) = matches.subcommand_matches("split") {
         split(
             matches.value_of("pkey").unwrap(),
@@ -136,15 +132,20 @@ fn main() -> anyhow::Result<()> {
             matches.value_of("head").unwrap(),
             matches.value_of("data"),
         )
-        .map_err(anyhow::Error::new)
     } else if let Some(matches) = matches.subcommand_matches("verify") {
         verify(
             matches.value_of("pkey").unwrap(),
             matches.value_of("archive").unwrap(),
             matches.value_of("basedir").unwrap(),
         )
-        .map_err(anyhow::Error::new)
     } else {
         Ok(())
     }
+}
+
+fn main() {
+    cli().unwrap_or_else(|err| {
+        eprintln!("error: {err:?}");
+        std::process::exit(1);
+    });
 }

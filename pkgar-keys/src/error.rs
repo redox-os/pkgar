@@ -1,13 +1,19 @@
 use std::error::Error as StdError;
 use std::fmt;
 use std::io;
+use std::path::PathBuf;
 
 #[derive(thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
     Core(#[from] pkgar_core::Error),
-    #[error(transparent)]
-    Io(#[from] io::Error),
+    #[error("{source} ({path:?}) {context:?}")]
+    Io {
+        #[source]
+        source: io::Error,
+        path: Option<PathBuf>,
+        context: &'static str,
+    },
     #[error(transparent)]
     Ser(#[from] toml::ser::Error),
     #[error(transparent)]

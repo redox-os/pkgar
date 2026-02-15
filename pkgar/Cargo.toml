@@ -21,10 +21,6 @@ thiserror = "2"
 optional = true
 version = "2"
 
-[dependencies.anyhow]
-optional = true
-version = "1"
-
 [dependencies.blake3]
 default-features = false
 features = ["rayon"]
@@ -36,5 +32,5 @@ tempfile = "3.1.0"
 
 [features]
 default = ["std"]
-cli = ["clap", "anyhow", "std"]
+cli = ["clap", "std"]
 std = []
