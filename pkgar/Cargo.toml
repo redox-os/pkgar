@@ -36,6 +36,6 @@ tempfile = "3.1.0"
 
 [features]
 default = ["std", "compress"]
-cli = ["clap", "std"]
 compress = ["lzma-rust2", "std"]
+cli = ["clap", "std"]
 std = []
