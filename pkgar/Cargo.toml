@@ -35,7 +35,6 @@ copy_dir = "0.1.2"
 tempfile = "3.1.0"
 
 [features]
-default = ["std", "compress"]
-compress = ["lzma-rust2", "std"]
-cli = ["clap", "std"]
-std = []
+default = ["compress"]
+compress = ["lzma-rust2"]
+cli = ["clap"]
