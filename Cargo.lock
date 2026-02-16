@@ -27,12 +27,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "anyhow"
-version = "1.0.99"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0674a1ddeecb70197781e945de4b3b8ffb61fa939a5597bcf48503737663100"
-
-[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -923,7 +917,6 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 name = "pkgar"
 version = "0.1.19"
 dependencies = [
- "anyhow",
  "blake3",
  "bytemuck",
  "clap",
@@ -948,7 +941,6 @@ dependencies = [
 name = "pkgar-keys"
 version = "0.1.19"
 dependencies = [
- "anyhow",
  "clap",
  "dirs",
  "hex",
