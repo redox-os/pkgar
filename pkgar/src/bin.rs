@@ -4,12 +4,13 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
+use pkgar_core::HeaderFlags;
 use pkgar_core::{
     dryoc::classic::crypto_sign::crypto_sign_detached, Entry, Header, Mode, PackageSrc,
 };
 use pkgar_keys::PublicKeyFile;
 
-use crate::ext::{copy_and_hash, EntryExt};
+use crate::ext::{copy_and_hash, DataWriter, EntryExt};
 use crate::package::PackageFile;
 use crate::transaction::Transaction;
 use crate::{Error, READ_WRITE_HASH_BUF_SIZE};
@@ -87,6 +88,23 @@ pub fn create(
     archive_path: impl AsRef<Path>,
     folder: impl AsRef<Path>,
 ) -> Result<(), Error> {
+    create_with_flags(
+        secret_path,
+        archive_path,
+        folder,
+        HeaderFlags::latest(
+            pkgar_core::Architecture::Independent,
+            pkgar_core::Packaging::Uncompressed,
+        ),
+    )
+}
+
+pub fn create_with_flags(
+    secret_path: impl AsRef<Path>,
+    archive_path: impl AsRef<Path>,
+    folder: impl AsRef<Path>,
+    flags: HeaderFlags,
+) -> Result<(), Error> {
     let keyfile = pkgar_keys::get_skey(secret_path.as_ref())?;
     let secret_key = keyfile
         .secret_key()
@@ -123,7 +141,8 @@ pub fn create(
         signature: [0; 64],
         public_key,
         blake3: [0; 32],
-        count: entries.len() as u64,
+        count: entries.len() as u32,
+        flags,
     };
 
     // Assign offsets to each entry
@@ -147,6 +166,8 @@ pub fn create(
 
     //TODO: fallocate data_offset + data_size
 
+    let mut archive_data = DataWriter::new(flags.packaging(), archive_file);
+
     // Stream each file, writing data and calculating b3sums
     let mut header_hasher = blake3::Hasher::new();
     let mut buf = vec![0; 4 * 1024 * 1024];
@@ -168,7 +189,7 @@ pub fn create(
                             context: "Opening entry data",
                         })?;
 
-                copy_and_hash(&mut entry_file, &mut archive_file, &mut buf).map_err(|source| {
+                copy_and_hash(&mut entry_file, &mut archive_data, &mut buf).map_err(|source| {
                     Error::Io {
                         source,
                         path: Some(path.to_path_buf()),
@@ -184,7 +205,7 @@ pub fn create(
                 })?;
 
                 let mut data = destination.as_os_str().as_bytes();
-                copy_and_hash(&mut data, &mut archive_file, &mut buf).map_err(|source| {
+                copy_and_hash(&mut data, &mut archive_data, &mut buf).map_err(|source| {
                     Error::Io {
                         source,
                         path: Some(path.to_path_buf()),
@@ -196,6 +217,7 @@ pub fn create(
                 return Err(Error::from(pkgar_core::Error::InvalidMode(mode.bits())));
             }
         };
+
         if total != entry.size() {
             return Err(Error::LengthMismatch {
                 actual: total,
@@ -206,6 +228,13 @@ pub fn create(
 
         header_hasher.update_rayon(bytemuck::bytes_of(entry));
     }
+
+    let mut archive_file = archive_data.finish().map_err(|source| Error::Io {
+        source,
+        path: None,
+        context: "Can't finalize compress",
+    })?;
+
     header
         .blake3
         .copy_from_slice(header_hasher.finalize().as_bytes());
@@ -307,7 +336,9 @@ pub fn split(
 
     let package = PackageFile::new(archive_path, &pkey)?;
     let data_offset = package.header().total_size()?;
-    let mut src = package.src.into_inner();
+    let Some(mut src) = package.src.map(|p| p.0.into_inner()) else {
+        return Err(Error::Core(pkgar_core::Error::NotInitialized));
+    };
 
     if let Some(data_path) = data_path_opt {
         let data_path = data_path.as_ref();

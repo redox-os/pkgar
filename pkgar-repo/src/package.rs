@@ -1,4 +1,4 @@
-use pkgar_core::{Header, PackageSrc, PublicKey, Zeroable};
+use pkgar_core::{Entry, Header, PackageSrc, PublicKey, Zeroable};
 use std::{convert::TryFrom, io::Read};
 
 use crate::Error;
@@ -7,6 +7,7 @@ pub struct PackageUrl<'a> {
     client: &'a reqwest::blocking::Client,
     url: String,
     header: Header,
+    data_offset: Option<u64>,
 }
 
 impl<'a> PackageUrl<'a> {
@@ -21,6 +22,7 @@ impl<'a> PackageUrl<'a> {
             // Need a blank header to construct the PackageFile, since we need to
             // use a method of PackageSrc in order to get the actual header...
             header: Header::zeroed(),
+            data_offset: None,
         };
         new.header = new.read_header(public_key)?;
         Ok(new)
@@ -60,5 +62,25 @@ impl PackageSrc for PackageUrl<'_> {
         eprintln!(" = {:?}", response.status());
         response.read_exact(buf)?;
         Ok(buf.len())
+    }
+
+    fn init_data_read(&mut self, data_offset: u64, _data_len: u64) -> Result<(), Self::Err> {
+        self.data_offset = Some(data_offset);
+        match self.header.flags.packaging() {
+            pkgar_core::Packaging::Uncompressed => Ok(()),
+            // TODO: LZMA2 support
+            _ => Err(Error::Pkgar(Box::new(pkgar::Error::Core(
+                pkgar_core::Error::NotInitialized,
+            )))),
+        }
+    }
+
+    fn read_data(&mut self, entry: Entry, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Err> {
+        let data_offset = self
+            .data_offset
+            .ok_or(Error::Pkgar(Box::new(pkgar::Error::Core(
+                pkgar_core::Error::NotInitialized,
+            ))))?;
+        self.read_at(offset + entry.offset + data_offset, buf)
     }
 }

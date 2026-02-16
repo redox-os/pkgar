@@ -7,17 +7,28 @@ use dryoc::classic::crypto_sign_ed25519::PublicKey;
 
 use crate::{Entry, Error, Header, HEADER_SIZE};
 
+/// Implements functions aiding reading the pkgar file based on general sources
 pub trait PackageSrc {
     type Err: From<Error>;
 
+    /// Read at specific byte offset. mutable because of Seekable.
+    /// This is must implemented for reading header and entries.
+    /// Users should not use this directly.
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Err>;
 
+    /// Read data at specific byte offset. mutable because of Seekable.
+    /// This is must implemented for reading data, offset is relative to the entry (data_offset + entry.offset).
+    fn read_data(&mut self, entry: Entry, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Err>;
+
+    /// Get cached header
     fn header(&self) -> Header;
 
-    /// Users of implementors of `PackageSrc` should use `header` instead of `read_header` for
-    /// cheap header access.
-    /// Implementors of `PackageSrc` should call this function during initialization and store
-    /// the result to pass out with `header`.
+    /// Init data read. data_offset must be saved by implementors to allow read_data.
+    /// This may be implemented for e.g. reading compressed package.
+    fn init_data_read(&mut self, data_offset: u64, data_len: u64) -> Result<(), Self::Err>;
+
+    /// Should be called at initialization by implementors to read headers.
+    /// Users should use header() instead.
     fn read_header(&mut self, public_key: &PublicKey) -> Result<Header, Self::Err> {
         let mut header_data = [0; HEADER_SIZE];
         self.read_at(0, &mut header_data)?;
@@ -25,6 +36,7 @@ pub trait PackageSrc {
         Ok(*header)
     }
 
+    /// Read all entries. This also initialize data reading.
     fn read_entries(&mut self) -> Result<Vec<Entry>, Self::Err> {
         let header = self.header();
         let entries_size = header
@@ -33,30 +45,45 @@ pub trait PackageSrc {
         let mut entries_data = vec![0; entries_size];
         self.read_at(HEADER_SIZE as u64, &mut entries_data)?;
         let entries = header.entries(&entries_data)?;
+
+        let data_offset = self.header().total_size()?;
+        let mut data_size: u64 = 0;
+        for entry in entries {
+            data_size = data_size.checked_add(entry.size).ok_or(Error::Overflow)?;
+        }
+        self.init_data_read(data_offset, data_size)?;
+
         Ok(entries.to_vec())
     }
 
-    /// Read from this src at a given entry's data with a given offset within that entry
-    fn read_entry(
-        &mut self,
-        entry: Entry,
-        offset: usize,
-        buf: &mut [u8],
-    ) -> Result<usize, Self::Err> {
+    /// Helper to get end of buffer relative to entry
+    fn calculate_end(entry: Entry, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Err> {
         if offset as u64 > entry.size {
             return Ok(0);
         }
-
         let mut end = usize::try_from(entry.size - offset as u64).map_err(Error::TryFromInt)?;
-
         if end > buf.len() {
             end = buf.len();
         }
+        Ok(end)
+    }
 
-        let offset =
-            HEADER_SIZE as u64 + self.header().entries_size()? + entry.offset + offset as u64;
+    /// Helper to get range relative to buffer
+    fn calculate_range(
+        src_len: usize,
+        offset: u64,
+        buf: &mut [u8],
+    ) -> Result<(usize, usize), Self::Err> {
+        let start = usize::try_from(offset).map_err(Error::TryFromInt)?;
+        if start >= src_len {
+            return Ok((0, 0));
+        }
+        let mut end = start.checked_add(buf.len()).ok_or(Error::Overflow)?;
+        if end > src_len {
+            end = src_len;
+        }
 
-        self.read_at(offset, &mut buf[..end])
+        Ok((start, end))
     }
 }
 
@@ -64,6 +91,7 @@ pub trait PackageSrc {
 pub struct PackageBuf<'a> {
     src: &'a [u8],
     header: Header,
+    data_offset: Option<u64>,
 }
 
 impl<'a> PackageBuf<'a> {
@@ -71,6 +99,7 @@ impl<'a> PackageBuf<'a> {
         let mut new = PackageBuf {
             src,
             header: Header::zeroed(),
+            data_offset: None,
         };
         new.header = *Header::new(new.src, public_key)?;
         Ok(new)
@@ -85,16 +114,22 @@ impl PackageSrc for PackageBuf<'_> {
     }
 
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, Error> {
-        let start = usize::try_from(offset).map_err(Error::TryFromInt)?;
-        let len = self.src.len();
-        if start >= len {
-            return Ok(0);
-        }
-        let mut end = start.checked_add(buf.len()).ok_or(Error::Overflow)?;
-        if end > len {
-            end = len;
-        }
+        let (start, end) = Self::calculate_range(self.src.len(), offset, buf)?;
         buf.copy_from_slice(&self.src[start..end]);
         Ok(buf.len())
+    }
+
+    fn init_data_read(&mut self, data_offset: u64, _data_len: u64) -> Result<(), Self::Err> {
+        self.data_offset = Some(data_offset);
+        match self.header.flags.packaging() {
+            crate::Packaging::Uncompressed => Ok(()),
+            // TODO: Unable to support LZMA2 due to crate conflict, move to "pkgar" crate maybe
+            _ => Err(Error::NotSupported),
+        }
+    }
+
+    fn read_data(&mut self, entry: Entry, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Err> {
+        let data_offset = self.data_offset.ok_or(Error::NotInitialized)?;
+        self.read_at(data_offset + entry.offset + offset, buf)
     }
 }

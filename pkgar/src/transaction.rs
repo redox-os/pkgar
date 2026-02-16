@@ -126,6 +126,7 @@ impl Transaction {
             let tmp_path = temp_path(&target_path, entry.blake3())?;
 
             let mode = entry.mode().map_err(Error::from)?;
+            let reader = src.data_reader(entry);
 
             let (entry_data_size, entry_data_hash) = match mode.kind() {
                 Mode::FILE => {
@@ -143,32 +144,35 @@ impl Transaction {
                         })?;
 
                     let (size, hash) =
-                        copy_and_hash(src.entry_reader(entry), &mut tmp_file, &mut buf).map_err(
-                            |source| Error::Io {
+                        copy_and_hash(reader, &mut tmp_file, &mut buf).map_err(|source| {
+                            Error::Io {
                                 source,
                                 path: Some(tmp_path.to_path_buf()),
-                                context: "Copying entry to tempfile",
-                            },
-                        )?;
+                                context: "Copying data to tempfile",
+                            }
+                        })?;
 
                     actions.push(Action::Rename(tmp_path, target_path));
                     (size, hash)
                 }
                 Mode::SYMLINK => {
-                    let mut data = Vec::new();
-                    let (size, hash) = copy_and_hash(src.entry_reader(entry), &mut data, &mut buf)
-                        .map_err(|source| Error::Io {
-                            source,
-                            path: Some(tmp_path.to_path_buf()),
-                            context: "Copying entry to tempfile",
+                    let mut tmp_data = Vec::new();
+                    let (size, hash) =
+                        copy_and_hash(reader, &mut tmp_data, &mut buf).map_err(|source| {
+                            Error::Io {
+                                source,
+                                path: Some(tmp_path.to_path_buf()),
+                                context: "Copying data to tempfile",
+                            }
                         })?;
 
-                    let sym_target = Path::new(OsStr::from_bytes(&data));
+                    let sym_target = Path::new(OsStr::from_bytes(&tmp_data));
                     symlink(sym_target, &tmp_path).map_err(|source| Error::Io {
                         source,
                         path: Some(sym_target.to_path_buf()),
                         context: "Symlinking to tmp",
                     })?;
+
                     actions.push(Action::Rename(tmp_path, target_path));
                     (size, hash)
                 }
