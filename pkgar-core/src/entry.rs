@@ -1,8 +1,7 @@
 //! The packed structs represent the on-disk format of pkgar
-use core::{ffi::CStr, fmt::Display};
+use core::fmt::Display;
 
 use alloc::string::String;
-use bitflags::parser::WriteHex;
 use blake3::Hash;
 use bytemuck::{Pod, Zeroable};
 

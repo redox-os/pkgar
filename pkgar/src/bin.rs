@@ -336,7 +336,9 @@ pub fn split(
 
     let package = PackageFile::new(archive_path, &pkey)?;
     let data_offset = package.header().total_size()?;
-    let mut src = package.src.unwrap().0.into_inner();
+    let Some(mut src) = package.src.map(|p| p.0.into_inner()) else {
+        return Err(Error::Core(pkgar_core::Error::NotInitialized));
+    };
 
     if let Some(data_path) = data_path_opt {
         let data_path = data_path.as_ref();

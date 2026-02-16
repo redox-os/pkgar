@@ -89,21 +89,24 @@ impl PackageSrc for PackageFile {
     }
 
     fn read_data(&mut self, entry: Entry, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Err> {
-        let Some((data_offset, data_len, reader, seek)) = &mut self.data else {
+        let Some((data_offset, _, reader, seek)) = &mut self.data else {
             return Err(Error::from(pkgar_core::Error::NotInitialized));
         };
         let end = <Self as PackageSrc>::calculate_end(entry, offset, buf)?;
         let offset = offset + entry.offset + *data_offset;
         if *seek != offset {
-            todo!();
-            // reader
-            //     .seek(SeekFrom::Start(offset))
-            //     .map_err(|source| Error::Io {
-            //         source,
-            //         path: None,
-            //         context: "Seek",
-            //     })?;
+            // note: in underlying reader, lzma can't seek backward
+            let relative_seek = (offset as i64) - (*seek as i64);
+            reader
+                .seek_relative(relative_seek)
+                .map_err(|source| Error::Io {
+                    source,
+                    path: None,
+                    context: "Seek",
+                })?;
+            *seek = offset;
         }
+        // println!("ENTRY {} READ offset={} buf={} end={}", entry, offset, buf.len(), end);
         reader
             .read_exact(&mut buf[..end])
             .map_err(|source| Error::Io {

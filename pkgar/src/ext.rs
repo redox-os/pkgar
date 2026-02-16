@@ -122,21 +122,25 @@ pub(crate) fn copy_and_hash<R: Read, W: Write>(
     Ok((written, hasher.finalize()))
 }
 
-/// A reader that provides acess to one entry's data within a `PackageSrc`.
+/// Implements writer based on data flags
+/// Note: while it's seekable, user should assume it can never read backward
 pub enum DataReader {
     Uncompressed(File),
-    LZMA2(lzma_rust2::Lzma2Reader<File>),
+    LZMA2((lzma_rust2::Lzma2Reader<File>, u64)),
 }
 
 impl DataReader {
     pub fn new(header: Packaging, file: File) -> Self {
         match header {
-            Packaging::LZMA2 => Self::LZMA2(lzma_rust2::Lzma2Reader::new(
-                file,
-                // same dict size with writer
-                lzma_rust2::LzmaOptions::DICT_SIZE_DEFAULT << 3,
-                None,
-            )),
+            Packaging::LZMA2 => {
+                let decoder = lzma_rust2::Lzma2Reader::new(
+                    file,
+                    // same dict size with writer
+                    lzma_rust2::LzmaOptions::DICT_SIZE_DEFAULT << 3,
+                    None,
+                );
+                Self::LZMA2((decoder, 0))
+            }
             _ => Self::Uncompressed(file),
         }
     }
@@ -144,8 +148,12 @@ impl DataReader {
     pub fn finish(self) -> File {
         match self {
             Self::Uncompressed(file) => file,
-            Self::LZMA2(xz_decoder) => xz_decoder.into_inner(),
+            Self::LZMA2((xz_decoder, _)) => xz_decoder.into_inner(),
         }
+    }
+
+    pub fn skip(&mut self, amount: u64) -> io::Result<u64> {
+        io::copy(&mut self.by_ref().take(amount), &mut io::sink())
     }
 }
 
@@ -153,11 +161,33 @@ impl Read for DataReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self {
             Self::Uncompressed(file) => file.read(buf),
-            Self::LZMA2(xz_decoder) => xz_decoder.read(buf),
+            Self::LZMA2((reader, pos)) => {
+                let seek = reader.read(buf)?;
+                *pos += seek as u64;
+                Ok(seek)
+            }
         }
     }
 }
 
+impl Seek for DataReader {
+    fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
+        match self {
+            Self::Uncompressed(file) => file.seek(pos),
+            Self::LZMA2((_, seek)) => {
+                let seek = *seek;
+                let rel = match pos {
+                    io::SeekFrom::Current(x) if x >= 0 => self.skip(x as u64),
+                    io::SeekFrom::Start(x) if x >= seek => self.skip(x as u64 - seek),
+                    _ => Err(io::Error::from(io::ErrorKind::NotSeekable)),
+                }?;
+                Ok(seek + rel)
+            }
+        }
+    }
+}
+
+/// Implements writer based on data flags
 pub enum DataWriter {
     Uncompressed(File),
     LZMA2(lzma_rust2::Lzma2Writer<File>),

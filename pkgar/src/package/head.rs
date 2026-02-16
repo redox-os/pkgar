@@ -1,7 +1,6 @@
 use bytemuck::Zeroable;
 use pkgar_core::{Entry, Header, PackageSrc, PublicKey};
 use std::{
-    convert::TryFrom,
     fs::{File, OpenOptions},
     io::{BufReader, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
