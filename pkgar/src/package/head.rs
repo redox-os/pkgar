@@ -14,42 +14,53 @@ use crate::Error;
 pub struct PackageHead {
     #[allow(dead_code)]
     head_path: PathBuf,
-    root_path: PathBuf,
+    root_path: Option<PathBuf>,
     pub(crate) src: BufReader<File>,
     header: Header,
 }
 
 impl PackageHead {
+    pub fn from_head_only(head_path: impl AsRef<Path>) -> Result<PackageHead, Error> {
+        let mut new = new_inner(head_path, None)?;
+        let mut header_data = [0; pkgar_core::HEADER_SIZE];
+        new.read_at(0, &mut header_data)?;
+        new.header = unsafe { *Header::new_unchecked(&header_data)? };
+
+        Ok(new)
+    }
+
     pub fn new(
         head_path: impl AsRef<Path>,
         root_path: impl AsRef<Path>,
         public_key: &PublicKey,
     ) -> Result<PackageHead, Error> {
-        let head_path = head_path.as_ref().to_path_buf();
-        let root_path = root_path.as_ref().to_path_buf();
-
-        let file = OpenOptions::new()
-            .read(true)
-            .open(&head_path)
-            .map_err(|source| Error::Io {
-                source,
-                path: Some(head_path.clone()),
-                context: "Open",
-            })?;
-
-        let mut new = PackageHead {
-            head_path,
-            root_path,
-            src: BufReader::new(file),
-
-            // Need a blank header to construct the PackageHead, since we need to
-            //   use a method of PackageSrc in order to get the actual header...
-            header: Header::zeroed(),
-        };
-
+        let mut new = new_inner(head_path, Some(root_path.as_ref()))?;
         new.header = new.read_header(public_key)?;
         Ok(new)
     }
+}
+
+fn new_inner(head_path: impl AsRef<Path>, root_path: Option<&Path>) -> Result<PackageHead, Error> {
+    let head_path = head_path.as_ref().to_path_buf();
+    let root_path = root_path.map(|p| p.to_path_buf());
+    let file = OpenOptions::new()
+        .read(true)
+        .open(&head_path)
+        .map_err(|source| Error::Io {
+            source,
+            path: Some(head_path.clone()),
+            context: "Open",
+        })?;
+    let new = PackageHead {
+        head_path,
+        root_path,
+        src: BufReader::new(file),
+
+        // Need a blank header to construct the PackageHead, since we need to
+        //   use a method of PackageSrc in order to get the actual header...
+        header: Header::zeroed(),
+    };
+    Ok(new)
 }
 
 impl PackageSrc for PackageHead {
@@ -78,25 +89,15 @@ impl PackageSrc for PackageHead {
     }
 
     /// Read from this src at a given entry's data with a given offset within that entry
-    fn read_data(
-        &mut self,
-        entry: Entry,
-        offset: usize,
-        buf: &mut [u8],
-    ) -> Result<usize, Self::Err> {
-        if offset as u64 > entry.size {
-            return Ok(0);
-        }
-
-        let mut end =
-            usize::try_from(entry.size - offset as u64).map_err(pkgar_core::Error::TryFromInt)?;
-
-        if end > buf.len() {
-            end = buf.len();
-        }
+    fn read_data(&mut self, entry: Entry, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Err> {
+        let end = <PackageHead as PackageSrc>::calculate_end(entry, offset, buf)?;
+        let root_path = self
+            .root_path
+            .clone()
+            .ok_or(Error::Core(pkgar_core::Error::NotSupported))?;
 
         let relative_path = entry.check_path()?;
-        let entry_path = self.root_path.join(relative_path);
+        let entry_path = root_path.join(relative_path);
         let mut entry_file = OpenOptions::new()
             .read(true)
             .open(&entry_path)
@@ -121,5 +122,9 @@ impl PackageSrc for PackageHead {
                 path: Some(entry_path),
                 context: "Read",
             })
+    }
+
+    fn init_data_read(&mut self, _: u64, _: u64) -> Result<(), Self::Err> {
+        Ok(())
     }
 }

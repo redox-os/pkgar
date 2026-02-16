@@ -10,7 +10,7 @@ use pkgar_core::{
 };
 use pkgar_keys::PublicKeyFile;
 
-use crate::ext::{copy_and_hash, EntryExt, DataWriter};
+use crate::ext::{copy_and_hash, DataWriter, EntryExt};
 use crate::package::PackageFile;
 use crate::transaction::Transaction;
 use crate::{Error, READ_WRITE_HASH_BUF_SIZE};
@@ -336,7 +336,7 @@ pub fn split(
 
     let package = PackageFile::new(archive_path, &pkey)?;
     let data_offset = package.header().total_size()?;
-    let mut src = package.src.into_inner();
+    let mut src = package.src.unwrap().0.into_inner();
 
     if let Some(data_path) = data_path_opt {
         let data_path = data_path.as_ref();

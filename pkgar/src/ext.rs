@@ -1,7 +1,7 @@
 //! Extention traits for base types defined in `pkgar-core`.
 use std::ffi::OsStr;
 use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path};
 
@@ -61,8 +61,8 @@ where
     fn path(&self) -> &Path;
 
     /// Build a data reader for a given entry on this source.
-    fn data_reader(&mut self, entry: Entry) -> DataReader<'_, Self> {
-        DataReader {
+    fn data_reader(&mut self, entry: Entry) -> EntryReader<'_, Self> {
+        EntryReader {
             src: self,
             entry,
             pos: 0,
@@ -72,7 +72,7 @@ where
 
 /// A reader that provides acess to one entry's data within a `PackageSrc`.
 /// Use `PackageSrcExt::data_reader` for construction
-pub struct DataReader<'a, Src>
+pub struct EntryReader<'a, Src>
 where
     Src: PackageSrc,
 {
@@ -81,7 +81,7 @@ where
     pos: usize,
 }
 
-impl<Src, E> Read for DataReader<'_, Src>
+impl<Src, E> Read for EntryReader<'_, Src>
 where
     Src: PackageSrc<Err = E>,
     E: From<pkgar_core::Error> + std::error::Error,
@@ -89,11 +89,11 @@ where
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let count = self
             .src
-            .read_data(self.entry, self.pos, buf)
+            .read_data(self.entry, self.pos as u64, buf)
             // This is a little painful, since e is pkgar::Error...
             // However, this is likely to be a very rarely triggered error
             // condition.
-            .map_err(|err| io::Error::new(io::ErrorKind::Other, err.to_string()))?;
+            .map_err(|err| io::Error::new(io::ErrorKind::Other, format!("{:?}", err)))?;
         self.pos += count;
         Ok(count)
     }
@@ -122,6 +122,42 @@ pub(crate) fn copy_and_hash<R: Read, W: Write>(
     Ok((written, hasher.finalize()))
 }
 
+/// A reader that provides acess to one entry's data within a `PackageSrc`.
+pub enum DataReader {
+    Uncompressed(File),
+    LZMA2(lzma_rust2::Lzma2Reader<File>),
+}
+
+impl DataReader {
+    pub fn new(header: Packaging, file: File) -> Self {
+        match header {
+            Packaging::LZMA2 => Self::LZMA2(lzma_rust2::Lzma2Reader::new(
+                file,
+                // same dict size with writer
+                lzma_rust2::LzmaOptions::DICT_SIZE_DEFAULT << 3,
+                None,
+            )),
+            _ => Self::Uncompressed(file),
+        }
+    }
+
+    pub fn finish(self) -> File {
+        match self {
+            Self::Uncompressed(file) => file,
+            Self::LZMA2(xz_decoder) => xz_decoder.into_inner(),
+        }
+    }
+}
+
+impl Read for DataReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Self::Uncompressed(file) => file.read(buf),
+            Self::LZMA2(xz_decoder) => xz_decoder.read(buf),
+        }
+    }
+}
+
 pub enum DataWriter {
     Uncompressed(File),
     LZMA2(lzma_rust2::Lzma2Writer<File>),
@@ -130,15 +166,15 @@ pub enum DataWriter {
 impl Write for DataWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self {
-            DataWriter::Uncompressed(file) => file.write(buf),
-            DataWriter::LZMA2(xz_encoder) => xz_encoder.write(buf),
+            Self::Uncompressed(file) => file.write(buf),
+            Self::LZMA2(xz_encoder) => xz_encoder.write(buf),
         }
     }
 
     fn flush(&mut self) -> io::Result<()> {
         match self {
-            DataWriter::Uncompressed(file) => file.flush(),
-            DataWriter::LZMA2(xz_encoder) => xz_encoder.flush(),
+            Self::Uncompressed(file) => file.flush(),
+            Self::LZMA2(xz_encoder) => xz_encoder.flush(),
         }
     }
 }
@@ -156,8 +192,8 @@ impl DataWriter {
 
     pub fn finish(self) -> std::io::Result<File> {
         match self {
-            DataWriter::Uncompressed(file) => Ok(file),
-            DataWriter::LZMA2(xz_encoder) => xz_encoder.finish(),
+            Self::Uncompressed(file) => Ok(file),
+            Self::LZMA2(xz_encoder) => xz_encoder.finish(),
         }
     }
 }

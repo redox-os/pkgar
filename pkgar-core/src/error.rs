@@ -12,6 +12,8 @@ pub enum Error {
     InvalidKey,
     InvalidMode(u32),
     Overflow,
+    NotInitialized,
+    NotSupported,
     TryFromInt(core::num::TryFromIntError),
 }
 
@@ -27,6 +29,8 @@ impl Display for Error {
             InvalidMode(mode) => format!("Invalid Mode: {:o}", mode),
             Cast(err) => format!("Bytemuck: {}", err),
             Overflow => "Overflow".to_string(),
+            NotInitialized => "Data Not Initialized".to_string(),
+            NotSupported => "Data Not Supported".to_string(),
             TryFromInt(err) => format!("TryFromInt: {}", err),
         };
         write!(f, "{}", msg)
