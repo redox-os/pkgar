@@ -55,7 +55,7 @@ impl PackageSrc for PackageFile {
             .map_err(|source| Error::Io {
                 source,
                 path: None,
-                context: "Seel",
+                context: "Seek",
             })?;
         self.src.read_exact(buf).map_err(|source| Error::Io {
             source,

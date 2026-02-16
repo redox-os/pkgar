@@ -60,9 +60,9 @@ where
     /// refactored to use something more generic than `Path` in future.
     fn path(&self) -> &Path;
 
-    /// Build a reader for a given entry on this source.
-    fn entry_reader(&mut self, entry: Entry) -> EntryReader<'_, Self> {
-        EntryReader {
+    /// Build a data reader for a given entry on this source.
+    fn data_reader(&mut self, entry: Entry) -> DataReader<'_, Self> {
+        DataReader {
             src: self,
             entry,
             pos: 0,
@@ -71,8 +71,8 @@ where
 }
 
 /// A reader that provides acess to one entry's data within a `PackageSrc`.
-/// Use `PackageSrcExt::entry_reader` for construction
-pub struct EntryReader<'a, Src>
+/// Use `PackageSrcExt::data_reader` for construction
+pub struct DataReader<'a, Src>
 where
     Src: PackageSrc,
 {
@@ -81,7 +81,7 @@ where
     pos: usize,
 }
 
-impl<Src, E> Read for EntryReader<'_, Src>
+impl<Src, E> Read for DataReader<'_, Src>
 where
     Src: PackageSrc<Err = E>,
     E: From<pkgar_core::Error> + std::error::Error,
@@ -89,7 +89,7 @@ where
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let count = self
             .src
-            .read_entry(self.entry, self.pos, buf)
+            .read_data(self.entry, self.pos, buf)
             // This is a little painful, since e is pkgar::Error...
             // However, this is likely to be a very rarely triggered error
             // condition.
@@ -122,28 +122,28 @@ pub(crate) fn copy_and_hash<R: Read, W: Write>(
     Ok((written, hasher.finalize()))
 }
 
-pub enum PackagingWriter {
+pub enum DataWriter {
     Uncompressed(File),
     LZMA2(lzma_rust2::Lzma2Writer<File>),
 }
 
-impl Write for PackagingWriter {
+impl Write for DataWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self {
-            PackagingWriter::Uncompressed(file) => file.write(buf),
-            PackagingWriter::LZMA2(xz_encoder) => xz_encoder.write(buf),
+            DataWriter::Uncompressed(file) => file.write(buf),
+            DataWriter::LZMA2(xz_encoder) => xz_encoder.write(buf),
         }
     }
 
     fn flush(&mut self) -> io::Result<()> {
         match self {
-            PackagingWriter::Uncompressed(file) => file.flush(),
-            PackagingWriter::LZMA2(xz_encoder) => xz_encoder.flush(),
+            DataWriter::Uncompressed(file) => file.flush(),
+            DataWriter::LZMA2(xz_encoder) => xz_encoder.flush(),
         }
     }
 }
 
-impl PackagingWriter {
+impl DataWriter {
     pub fn new(header: Packaging, file: File) -> Self {
         match header {
             Packaging::LZMA2 => Self::LZMA2(lzma_rust2::Lzma2Writer::new(
@@ -156,8 +156,8 @@ impl PackagingWriter {
 
     pub fn finish(self) -> std::io::Result<File> {
         match self {
-            PackagingWriter::Uncompressed(file) => Ok(file),
-            PackagingWriter::LZMA2(xz_encoder) => xz_encoder.finish(),
+            DataWriter::Uncompressed(file) => Ok(file),
+            DataWriter::LZMA2(xz_encoder) => xz_encoder.finish(),
         }
     }
 }

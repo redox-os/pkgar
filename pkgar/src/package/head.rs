@@ -78,7 +78,7 @@ impl PackageSrc for PackageHead {
     }
 
     /// Read from this src at a given entry's data with a given offset within that entry
-    fn read_entry(
+    fn read_data(
         &mut self,
         entry: Entry,
         offset: usize,

@@ -10,7 +10,7 @@ use pkgar_core::{
 };
 use pkgar_keys::PublicKeyFile;
 
-use crate::ext::{copy_and_hash, EntryExt, PackagingWriter};
+use crate::ext::{copy_and_hash, EntryExt, DataWriter};
 use crate::package::PackageFile;
 use crate::transaction::Transaction;
 use crate::{Error, READ_WRITE_HASH_BUF_SIZE};
@@ -88,7 +88,15 @@ pub fn create(
     archive_path: impl AsRef<Path>,
     folder: impl AsRef<Path>,
 ) -> Result<(), Error> {
-    create_with_flags(secret_path, archive_path, folder, HeaderFlags::default())
+    create_with_flags(
+        secret_path,
+        archive_path,
+        folder,
+        HeaderFlags::latest(
+            pkgar_core::Architecture::Independent,
+            pkgar_core::Packaging::Uncompressed,
+        ),
+    )
 }
 
 pub fn create_with_flags(
@@ -158,7 +166,7 @@ pub fn create_with_flags(
 
     //TODO: fallocate data_offset + data_size
 
-    let mut archive_data = PackagingWriter::new(flags.packaging(), archive_file);
+    let mut archive_data = DataWriter::new(flags.packaging(), archive_file);
 
     // Stream each file, writing data and calculating b3sums
     let mut header_hasher = blake3::Hasher::new();
