@@ -22,6 +22,8 @@ purpose of this is to allow downloading a header only and verifying local files
 before downloading file data. Concatenating the header and data files creates a
 valid single file: `cat example.pkgar_head example.pkgar_data > example.pkgar`
 
+All data specified below is little-endian.
+
 ### Header Portion
 
 The header portion is designed to contain the data required to verify files
@@ -38,15 +40,36 @@ The size of the header struct is 136 bytes. All fields are packed.
 - signature - 512-bit (64 byte) NaCl signature of header data
 - public_key - 256-bit (32 byte) NaCl public key used to generate signature
 - blake3 - 256-bit (32 byte) blake3 sum of the entry data
-- count - 64-bit count of entry structs, which immediately follow
+- count - 32-bit count of entry structs, which starts immediately after header struct
+- flags - 32-bit bitflags contains what data is represented
+
+#### Data Flags
+
+The data flags represent what data it contained, stored as 32 bitflags.
+
+- bit 0-8, enumeration from 0-255 represent the data and entry struct version:
+  - `0`: initial version
+  - others: reserved
+- bit 9-16, enumeration from 0-255 represent the binary achitecture it contains:
+  - `0`: architecture-independent
+  - `1`: x86_64, base arch (x86_64-v1)
+  - `2`: 32 bit x86, base arch (i586)
+  - `3`: aarch64, base arch (Armv8-A)
+  - `4`: riscv64, base arch (extension GC)
+  - others: reserved
+- bit 17-24, enumeration from 0-255 represent how the data file is packaged:
+  - `0`: not compressed
+  - `1`: LZMA, whole data file compression
+  - others: reserved
+- bit 25-31, reserved
 
 #### Entry Struct
 
 The size of the entry struct is 308 bytes. All fields are packed.
 
 - blake3 - 256-bit (32 byte) blake3 sum of the file data
-- offset - 64-bit little endian offset of file data in the data portion
-- size - 64-bit little endian size in bytes of the file data in the data portion
+- offset - 64-bit offset of file data in the data portion
+- size - 64-bit size in bytes of the file data in the data portion
 - mode - 32-bit Unix permissions (user, group, other with read, write, execute)
 - path - 256 byte NUL-terminated relative path from extract directory
 
