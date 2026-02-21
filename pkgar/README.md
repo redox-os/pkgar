@@ -59,7 +59,7 @@ The data flags represent what data it contained, stored as 32 bitflags.
   - others: reserved
 - bit 17-24, enumeration from 0-255 represent how the data file is packaged:
   - `0`: not compressed
-  - `1`: LZMA, whole data file compression
+  - `1`: LZMA2, per-entry data file compression
   - others: reserved
 - bit 25-31, reserved
 
@@ -80,6 +80,10 @@ produce a .pkgar_data.gz file, for example. It can be removed after the install
 is completed. It is possible for it to contain holes, invalid data, or
 unreferenced data - so long as the blake3 of files identified in the header are
 still valid. This data should be removed when an archive is rebuilt.
+
+The data format depends on the package format:
+- `0`: Raw data.
+- `1`: 64-bit uncompressed size, followed by LZMA2 compressed data.
 
 ### Operation
 

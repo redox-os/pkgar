@@ -1,11 +1,12 @@
 //! Extention traits for base types defined in `pkgar-core`.
 use std::ffi::OsStr;
+use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path};
 
 use blake3::{Hash, Hasher};
-use pkgar_core::{Entry, PackageSrc};
+use pkgar_core::{Entry, PackageSrc, Packaging};
 
 use crate::Error;
 
@@ -119,4 +120,49 @@ pub(crate) fn copy_and_hash<R: Read, W: Write>(
         write.write_all(&buf[..count])?;
     }
     Ok((written, hasher.finalize()))
+}
+
+/// Implements writer based on data flags
+pub enum DataWriter {
+    Uncompressed(File),
+    LZMA2(lzma_rust2::Lzma2Writer<File>),
+}
+
+impl Write for DataWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            Self::Uncompressed(file) => file.write(buf),
+            Self::LZMA2(xz_encoder) => xz_encoder.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            Self::Uncompressed(file) => file.flush(),
+            Self::LZMA2(xz_encoder) => xz_encoder.flush(),
+        }
+    }
+}
+
+impl DataWriter {
+    pub fn new(header: Packaging, mut file: File, len: u64) -> std::io::Result<Self> {
+        let writer = match header {
+            Packaging::LZMA2 => {
+                file.write(&len.to_le_bytes())?;
+                Self::LZMA2(lzma_rust2::Lzma2Writer::new(
+                    file,
+                    lzma_rust2::Lzma2Options::with_preset(5),
+                ))
+            }
+            _ => Self::Uncompressed(file),
+        };
+        Ok(writer)
+    }
+
+    pub fn finish(self) -> std::io::Result<File> {
+        match self {
+            Self::Uncompressed(file) => Ok(file),
+            Self::LZMA2(xz_encoder) => xz_encoder.finish(),
+        }
+    }
 }
