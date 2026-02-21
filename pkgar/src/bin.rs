@@ -4,6 +4,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
+use pkgar_core::HeaderFlags;
 use pkgar_core::{
     dryoc::classic::crypto_sign::crypto_sign_detached, Entry, Header, Mode, PackageSrc,
 };
@@ -87,6 +88,23 @@ pub fn create(
     archive_path: impl AsRef<Path>,
     folder: impl AsRef<Path>,
 ) -> Result<(), Error> {
+    create_with_flags(
+        secret_path,
+        archive_path,
+        folder,
+        HeaderFlags::latest(
+            pkgar_core::Architecture::Independent,
+            pkgar_core::Packaging::Uncompressed,
+        ),
+    )
+}
+
+pub fn create_with_flags(
+    secret_path: impl AsRef<Path>,
+    archive_path: impl AsRef<Path>,
+    folder: impl AsRef<Path>,
+    flags: HeaderFlags,
+) -> Result<(), Error> {
     let keyfile = pkgar_keys::get_skey(secret_path.as_ref())?;
     let secret_key = keyfile
         .secret_key()
@@ -124,7 +142,7 @@ pub fn create(
         public_key,
         blake3: [0; 32],
         count: entries.len() as u32,
-        flags: 0,
+        flags,
     };
 
     // Assign offsets to each entry

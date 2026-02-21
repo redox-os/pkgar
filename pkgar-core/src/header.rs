@@ -2,10 +2,10 @@
 
 use alloc::vec;
 use bytemuck::{Pod, PodCastError, Zeroable};
-use core::convert::TryFrom;
-use core::mem;
+use core::{convert::TryFrom, mem};
+use dryoc::classic::crypto_sign::crypto_sign_open;
 
-use crate::{dryoc::classic::crypto_sign::crypto_sign_open, Entry, Error, PublicKey};
+use crate::{Entry, Error, HeaderFlags, PublicKey};
 
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 #[repr(packed, C)]
@@ -19,7 +19,7 @@ pub struct Header {
     /// Count of Entry structs, which starts immediately after header struct
     pub count: u32,
     /// Generic flags contain data and entry struct properties
-    pub flags: u32,
+    pub flags: HeaderFlags,
 }
 
 impl Header {
