@@ -1,4 +1,6 @@
 //! The packed structs represent the on-disk format of pkgar
+use core::fmt::Display;
+
 use blake3::Hash;
 use bytemuck::{Pod, Zeroable};
 
@@ -17,6 +19,21 @@ pub struct Entry {
     pub mode: u32,
     /// NUL-terminated relative path from extract directory
     pub path: [u8; 256],
+}
+
+impl Display for Entry {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let (offset, size, mode) = (self.offset, self.size, self.mode);
+        write!(
+            f,
+            "path={:?} hash={} offset={} size={} mode={:o}",
+            alloc::string::String::from_utf8(self.path_bytes().into()).unwrap_or_default(),
+            self.blake3().to_hex(),
+            offset,
+            size,
+            mode
+        )
+    }
 }
 
 impl Entry {

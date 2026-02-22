@@ -1,7 +1,6 @@
 use bytemuck::Zeroable;
 use pkgar_core::{Entry, Header, PackageSrc, PublicKey};
 use std::{
-    convert::TryFrom,
     fs::{File, OpenOptions},
     io::{BufReader, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
@@ -81,18 +80,13 @@ impl PackageSrc for PackageHead {
     fn read_entry(
         &mut self,
         entry: Entry,
-        offset: usize,
+        offset: u64,
         buf: &mut [u8],
     ) -> Result<usize, Self::Err> {
-        if offset as u64 > entry.size {
+        let end = Self::calculate_end(&entry, offset, &buf)?;
+
+        if end == 0 {
             return Ok(0);
-        }
-
-        let mut end =
-            usize::try_from(entry.size - offset as u64).map_err(pkgar_core::Error::TryFromInt)?;
-
-        if end > buf.len() {
-            end = buf.len();
         }
 
         let relative_path = entry.check_path()?;

@@ -2,10 +2,10 @@
 
 use alloc::vec;
 use bytemuck::{Pod, PodCastError, Zeroable};
-use core::convert::TryFrom;
 use core::mem;
+use dryoc::classic::crypto_sign::crypto_sign_open;
 
-use crate::{dryoc::classic::crypto_sign::crypto_sign_open, Entry, Error, PublicKey};
+use crate::{Entry, Error, HeaderFlags, PublicKey, ENTRY_SIZE, HEADER_SIZE};
 
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 #[repr(packed, C)]
@@ -16,8 +16,10 @@ pub struct Header {
     pub public_key: [u8; 32],
     /// Blake3 sum of entry data
     pub blake3: [u8; 32],
-    /// Count of Entry structs, which immediately follow
-    pub count: u64,
+    /// Count of Entry structs, which starts immediately after header struct
+    pub count: u32,
+    /// Generic flags contain data and entry struct properties
+    pub flags: HeaderFlags,
 }
 
 impl Header {
@@ -51,27 +53,27 @@ impl Header {
         Ok(bytemuck::try_from_bytes(data)?)
     }
 
-    pub fn count(&self) -> u64 {
+    pub fn count(&self) -> u32 {
         self.count
     }
 
     /// Retrieve the size of the entries
-    pub fn entries_size(&self) -> Result<u64, Error> {
-        let entry_size = u64::try_from(mem::size_of::<Entry>())?;
-        self.count.checked_mul(entry_size).ok_or(Error::Overflow)
+    pub fn entries_size(&self) -> Result<usize, Error> {
+        (self.count as usize)
+            .checked_mul(ENTRY_SIZE)
+            .ok_or(Error::Overflow)
     }
 
     /// Retrieve the size of the Header and its entries
-    pub fn total_size(&self) -> Result<u64, Error> {
-        let header_size = u64::try_from(mem::size_of::<Header>())?;
+    pub fn total_size(&self) -> Result<usize, Error> {
         self.entries_size()?
-            .checked_add(header_size)
+            .checked_add(HEADER_SIZE)
             .ok_or(Error::Overflow)
     }
 
     /// Parse entries from raw entries data and verify using blake3
     pub fn entries<'a>(&self, data: &'a [u8]) -> Result<&'a [Entry], Error> {
-        let entries_size = usize::try_from(self.entries_size()?)?;
+        let entries_size = self.entries_size()?;
 
         let entries_data = data
             .get(..entries_size)

@@ -4,15 +4,16 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
+use pkgar_core::HeaderFlags;
 use pkgar_core::{
     dryoc::classic::crypto_sign::crypto_sign_detached, Entry, Header, Mode, PackageSrc,
 };
 use pkgar_keys::PublicKeyFile;
 
-use crate::ext::{copy_and_hash, EntryExt};
+use crate::ext::{copy_and_hash, DataReader, DataWriter, EntryExt, PackageSrcExt};
 use crate::package::PackageFile;
 use crate::transaction::Transaction;
-use crate::{Error, READ_WRITE_HASH_BUF_SIZE};
+use crate::{wrap_io_err, Error, READ_WRITE_HASH_BUF_SIZE};
 
 fn folder_entries<P, Q>(base: P, path: Q, entries: &mut Vec<Entry>) -> io::Result<()>
 where
@@ -87,6 +88,23 @@ pub fn create(
     archive_path: impl AsRef<Path>,
     folder: impl AsRef<Path>,
 ) -> Result<(), Error> {
+    create_with_flags(
+        secret_path,
+        archive_path,
+        folder,
+        HeaderFlags::latest(
+            pkgar_core::Architecture::Independent,
+            pkgar_core::Packaging::Uncompressed,
+        ),
+    )
+}
+
+pub fn create_with_flags(
+    secret_path: impl AsRef<Path>,
+    archive_path: impl AsRef<Path>,
+    folder: impl AsRef<Path>,
+    flags: HeaderFlags,
+) -> Result<(), Error> {
     let keyfile = pkgar_keys::get_skey(secret_path.as_ref())?;
     let secret_key = keyfile
         .secret_key()
@@ -103,106 +121,104 @@ pub fn create(
         .create(true)
         .truncate(true)
         .open(archive_path)
-        .map_err(|source| Error::Io {
-            source,
-            path: Some(archive_path.to_path_buf()),
-            context: "Opening source",
-        })?;
+        .map_err(wrap_io_err!(archive_path, "Opening source"))?;
 
     // Create a list of entries
     let mut entries = Vec::new();
     let folder = folder.as_ref();
-    folder_entries(folder, folder, &mut entries).map_err(|source| Error::Io {
-        source,
-        path: Some(folder.to_path_buf()),
-        context: "Recursing buildroot",
-    })?;
+    folder_entries(folder, folder, &mut entries)
+        .map_err(wrap_io_err!(archive_path, "Recursing buildroot"))?;
 
     // Create initial header
     let mut header = Header {
         signature: [0; 64],
         public_key,
         blake3: [0; 32],
-        count: entries.len() as u64,
+        count: entries.len() as u32,
+        flags,
     };
-
-    // Assign offsets to each entry
-    let mut data_size: u64 = 0;
-    for entry in &mut entries {
-        entry.offset = data_size;
-        data_size = data_size
-            .checked_add(entry.size)
-            .ok_or(pkgar_core::Error::Overflow)
-            .map_err(Error::from)?;
-    }
 
     let data_offset = header.total_size()?;
     archive_file
         .seek(SeekFrom::Start(data_offset as u64))
-        .map_err(|source| Error::Io {
-            source,
-            path: Some(archive_path.to_path_buf()),
-            context: "Seeking archive file",
-        })?;
+        .map_err(wrap_io_err!(archive_path, "Seeking archive file"))?;
 
     //TODO: fallocate data_offset + data_size
 
     // Stream each file, writing data and calculating b3sums
     let mut header_hasher = blake3::Hasher::new();
     let mut buf = vec![0; 4 * 1024 * 1024];
+    let mut data_offset: u64 = 0;
     for entry in &mut entries {
         let relative = entry.check_path()?;
         let path = folder.join(relative);
 
         let mode = entry.mode().map_err(Error::from)?;
 
-        let (total, hash) = match mode.kind() {
+        // uncompressed size, compressed size, real size
+        let (ulen, clen, rlen, hash) = match mode.kind() {
             Mode::FILE => {
-                let mut entry_file =
-                    fs::OpenOptions::new()
-                        .read(true)
-                        .open(&path)
-                        .map_err(|source| Error::Io {
-                            source,
-                            path: Some(path.to_path_buf()),
-                            context: "Opening entry data",
-                        })?;
-
-                copy_and_hash(&mut entry_file, &mut archive_file, &mut buf).map_err(|source| {
-                    Error::Io {
-                        source,
-                        path: Some(path.to_path_buf()),
-                        context: "Writing entry to archive",
-                    }
-                })?
+                let mut entry_file = fs::OpenOptions::new()
+                    .read(true)
+                    .open(&path)
+                    .map_err(wrap_io_err!(path, "Opening entry data"))?;
+                let entry_meta = entry_file
+                    .metadata()
+                    .map_err(wrap_io_err!(path, "Checking entry data size"))?;
+                let start_pos = archive_file
+                    .stream_position()
+                    .map_err(wrap_io_err!(path, "Getting file position"))?;
+                let rlen = entry_meta.len();
+                let mut writer = DataWriter::new(header.flags.packaging(), archive_file, rlen)
+                    .map_err(wrap_io_err!(path, "Writing entry data size"))?;
+                let (ulen, hash) = copy_and_hash(&mut entry_file, &mut writer, &mut buf)
+                    .map_err(wrap_io_err!(path, "Writing data to archive"))?;
+                archive_file = writer
+                    .finish()
+                    .map_err(wrap_io_err!(path, "Finalize archive"))?;
+                let end_pos = archive_file
+                    .stream_position()
+                    .map_err(wrap_io_err!(path, "Getting file position"))?;
+                (ulen, end_pos - start_pos, rlen, hash)
             }
             Mode::SYMLINK => {
-                let destination = fs::read_link(&path).map_err(|source| Error::Io {
-                    source,
-                    path: Some(path.to_path_buf()),
-                    context: "Reading entry symlink",
-                })?;
-
+                let destination =
+                    fs::read_link(&path).map_err(wrap_io_err!(path, "Reading entry symlink"))?;
+                let start_pos = archive_file
+                    .stream_position()
+                    .map_err(wrap_io_err!(path, "Getting file position"))?;
                 let mut data = destination.as_os_str().as_bytes();
-                copy_and_hash(&mut data, &mut archive_file, &mut buf).map_err(|source| {
-                    Error::Io {
-                        source,
-                        path: Some(path.to_path_buf()),
-                        context: "Writing symlink to archive",
-                    }
-                })?
+                let rlen = data.len() as u64;
+                let mut writer = DataWriter::new(header.flags.packaging(), archive_file, rlen)
+                    .map_err(wrap_io_err!(path, "Writing entry data size"))?;
+                let (ulen, hash) = copy_and_hash(&mut data, &mut writer, &mut buf)
+                    .map_err(wrap_io_err!(path, "Writing data to archive"))?;
+                archive_file = writer
+                    .finish()
+                    .map_err(wrap_io_err!(path, "Finalize archive"))?;
+                let end_pos = archive_file
+                    .stream_position()
+                    .map_err(wrap_io_err!(path, "Getting file position"))?;
+                (ulen, end_pos - start_pos, rlen, hash)
             }
             _ => {
                 return Err(Error::from(pkgar_core::Error::InvalidMode(mode.bits())));
             }
         };
-        if total != entry.size() {
+        if ulen != rlen {
             return Err(Error::LengthMismatch {
-                actual: total,
-                expected: entry.size(),
+                actual: ulen,
+                expected: rlen,
             });
         }
+
+        entry.size = clen;
+        entry.offset = data_offset;
         entry.blake3.copy_from_slice(hash.as_bytes());
+        data_offset = data_offset
+            .checked_add(clen)
+            .ok_or(pkgar_core::Error::Overflow)
+            .map_err(Error::from)?;
 
         header_hasher.update_rayon(bytemuck::bytes_of(entry));
     }
@@ -305,9 +321,9 @@ pub fn split(
 
     let pkey = PublicKeyFile::open(pkey_path)?.pkey;
 
-    let package = PackageFile::new(archive_path, &pkey)?;
-    let data_offset = package.header().total_size()?;
-    let mut src = package.src.into_inner();
+    let mut package = PackageFile::new(archive_path, &pkey)?;
+    let data_offset = package.header().total_size()? as u64;
+    let mut src = package.take_reader()?;
 
     if let Some(data_path) = data_path_opt {
         let data_path = data_path.as_ref();
@@ -369,26 +385,28 @@ pub fn verify(
 ) -> Result<(), Error> {
     let pkey = PublicKeyFile::open(pkey_path)?.pkey;
 
-    let mut package = PackageFile::new(archive_path, &pkey)?;
+    let mut package = PackageFile::new(&archive_path, &pkey)?;
+    let entries = package.read_entries()?;
+    let mut pkg_file = package.take_reader()?;
+    let header = package.header();
 
     let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
-    for entry in package.read_entries()? {
+    for entry in entries {
         let expected_path = base_dir.as_ref().join(entry.check_path()?);
 
-        let expected = File::open(&expected_path).map_err(|source| Error::Io {
-            source,
-            path: Some(expected_path.to_path_buf()),
-            context: "Opening file",
-        })?;
+        let mut expected =
+            File::open(&expected_path).map_err(wrap_io_err!(expected_path, "Opening file"))?;
 
-        let (count, hash) =
-            copy_and_hash(expected, io::sink(), &mut buf).map_err(|source| Error::Io {
-                source,
-                path: Some(expected_path.to_path_buf()),
-                context: "Writing file to to black hole",
-            })?;
+        let (count, hash) = copy_and_hash(&mut expected, &mut io::sink(), &mut buf)
+            .map_err(wrap_io_err!(expected_path, "Writing file to to black hole"))?;
 
-        entry.verify(hash, count)?;
+        // TODO: Just the head is enough for uncompressed, but requires full data for compressed pkgar
+        let reader = DataReader::new_with_seek(&header, pkg_file, &entry).map_err(wrap_io_err!(
+            archive_path.as_ref(),
+            "Reading pkg data (make sure to provide full package instead of just head)"
+        ))?;
+        entry.verify(hash, count, &reader)?;
+        pkg_file = reader.into_inner();
     }
     Ok(())
 }

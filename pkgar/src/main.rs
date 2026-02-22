@@ -4,7 +4,7 @@
 use clap::{
     crate_authors, crate_description, crate_name, crate_version, App, AppSettings, Arg, SubCommand,
 };
-use pkgar::{create, extract, list, remove, split, verify, Error};
+use pkgar::{create_with_flags, extract, list, remove, split, verify, Error};
 use pkgar_keys::{DEFAULT_PUBKEY, DEFAULT_SECKEY};
 
 fn cli() -> Result<(), Error> {
@@ -48,6 +48,11 @@ fn cli() -> Result<(), Error> {
         .value_name("DIR")
         .default_value(".");
 
+    let arg_compress = Arg::with_name("compress")
+        .help("Enable compression for the archive")
+        .short("c")
+        .long("compress");
+
     let matches = App::new(crate_name!())
         .author(crate_authors!(", "))
         .about(crate_description!())
@@ -58,7 +63,8 @@ fn cli() -> Result<(), Error> {
                 .about("Create archive")
                 .arg(&arg_skey)
                 .arg(&arg_archive)
-                .arg(&arg_basedir),
+                .arg(&arg_basedir)
+                .arg(&arg_compress),
         )
         .subcommand(
             SubCommand::with_name("extract")
@@ -103,10 +109,17 @@ fn cli() -> Result<(), Error> {
         .get_matches();
 
     if let Some(matches) = matches.subcommand_matches("create") {
-        create(
+        create_with_flags(
             matches.value_of("skey").unwrap(),
             matches.value_of("archive").unwrap(),
             matches.value_of("basedir").unwrap(),
+            pkgar_core::HeaderFlags::latest(
+                pkgar_core::Architecture::Independent,
+                match matches.is_present("compress") {
+                    true => pkgar_core::Packaging::LZMA2,
+                    false => pkgar_core::Packaging::Uncompressed,
+                },
+            ),
         )
     } else if let Some(matches) = matches.subcommand_matches("extract") {
         extract(
