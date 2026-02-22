@@ -1,6 +1,6 @@
 [package]
 name = "pkgar-keys"
-version = "0.1.19"
+version.workspace = true
 description = "Key management tool/library for pkgar"
 license = "MIT"
 authors = ["Wesley Hershberger <mggmugginsmc@gmail.com>"]
@@ -17,7 +17,7 @@ clap = { version = "2", optional = true }
 dirs = "6"
 hex = { version = "0.4.2", features = ["serde"] }
 lazy_static = "1.4.0"
-pkgar-core = { version = "0.1.19", path = "../pkgar-core" }
+pkgar-core = { path = "../pkgar-core" }
 seckey = "0.11.2"
 serde = { version = "1", default-features = false, features = ["derive"] }
 termion = "4"
