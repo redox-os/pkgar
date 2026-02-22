@@ -27,9 +27,7 @@ pub trait PackageSrc {
 
     fn read_entries(&mut self) -> Result<Vec<Entry>, Self::Err> {
         let header = self.header();
-        let entries_size = header
-            .entries_size()
-            .and_then(|rslt| usize::try_from(rslt).map_err(Error::TryFromInt))?;
+        let entries_size = header.entries_size()?;
         let mut entries_data = vec![0; entries_size];
         self.read_at(HEADER_SIZE as u64, &mut entries_data)?;
         let entries = header.entries(&entries_data)?;
@@ -40,23 +38,48 @@ pub trait PackageSrc {
     fn read_entry(
         &mut self,
         entry: Entry,
-        offset: usize,
+        offset: u64,
         buf: &mut [u8],
     ) -> Result<usize, Self::Err> {
-        if offset as u64 > entry.size {
+        let end = Self::calculate_end(&entry, offset, &buf)?;
+
+        if end == 0 {
             return Ok(0);
         }
 
-        let mut end = usize::try_from(entry.size - offset as u64).map_err(Error::TryFromInt)?;
+        let offset = self.header().total_size()? as u64 + entry.offset + offset;
 
+        self.read_at(offset, &mut buf[..end])
+    }
+
+    /// Helper to get end of buffer relative to entry
+    fn calculate_end(entry: &Entry, offset: u64, buf: &[u8]) -> Result<usize, Self::Err> {
+        if offset as u64 > entry.size {
+            return Ok(0);
+        }
+        let mut end = usize::try_from(entry.size - offset as u64).map_err(Error::TryFromInt)?;
         if end > buf.len() {
             end = buf.len();
         }
+        Ok(end)
+    }
 
-        let offset =
-            HEADER_SIZE as u64 + self.header().entries_size()? + entry.offset + offset as u64;
+    /// Helper to get range relative to buffer
+    fn calculate_range(
+        src_len: usize,
+        offset: u64,
+        buf: &[u8],
+    ) -> Result<(usize, usize), Self::Err> {
+        let start = usize::try_from(offset).map_err(Error::TryFromInt)?;
+        if start >= src_len {
+            return Ok((0, 0));
+        }
+        let mut end = start.checked_add(buf.len()).ok_or(Error::Overflow)?;
+        if end > src_len {
+            end = src_len;
+        }
 
-        self.read_at(offset, &mut buf[..end])
+        Ok((start, end))
     }
 }
 
@@ -85,15 +108,7 @@ impl PackageSrc for PackageBuf<'_> {
     }
 
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, Error> {
-        let start = usize::try_from(offset).map_err(Error::TryFromInt)?;
-        let len = self.src.len();
-        if start >= len {
-            return Ok(0);
-        }
-        let mut end = start.checked_add(buf.len()).ok_or(Error::Overflow)?;
-        if end > len {
-            end = len;
-        }
+        let (start, end) = Self::calculate_range(self.src.len(), offset, buf)?;
         buf.copy_from_slice(&self.src[start..end]);
         Ok(buf.len())
     }

@@ -10,7 +10,7 @@ use pkgar_core::{
 };
 use pkgar_keys::PublicKeyFile;
 
-use crate::ext::{copy_and_hash, DataWriter, EntryExt};
+use crate::ext::{copy_and_hash, DataReader, DataWriter, EntryExt, PackageSrcExt};
 use crate::package::PackageFile;
 use crate::transaction::Transaction;
 use crate::{wrap_io_err, Error, READ_WRITE_HASH_BUF_SIZE};
@@ -138,11 +138,6 @@ pub fn create_with_flags(
         flags,
     };
 
-    // Assign offsets to each entry
-    // for entry in &mut entries {
-    //     entry.offset = data_size;
-    // }
-
     let data_offset = header.total_size()?;
     archive_file
         .seek(SeekFrom::Start(data_offset as u64))
@@ -160,7 +155,8 @@ pub fn create_with_flags(
 
         let mode = entry.mode().map_err(Error::from)?;
 
-        let (ulen, clen, hash) = match mode.kind() {
+        // uncompressed size, compressed size, real size
+        let (ulen, clen, rlen, hash) = match mode.kind() {
             Mode::FILE => {
                 let mut entry_file = fs::OpenOptions::new()
                     .read(true)
@@ -172,9 +168,9 @@ pub fn create_with_flags(
                 let start_pos = archive_file
                     .stream_position()
                     .map_err(wrap_io_err!(path, "Getting file position"))?;
-                let mut writer =
-                    DataWriter::new(header.flags.packaging(), archive_file, entry_meta.len())
-                        .map_err(wrap_io_err!(path, "Writing entry data size"))?;
+                let rlen = entry_meta.len();
+                let mut writer = DataWriter::new(header.flags.packaging(), archive_file, rlen)
+                    .map_err(wrap_io_err!(path, "Writing entry data size"))?;
                 let (ulen, hash) = copy_and_hash(&mut entry_file, &mut writer, &mut buf)
                     .map_err(wrap_io_err!(path, "Writing data to archive"))?;
                 archive_file = writer
@@ -183,7 +179,7 @@ pub fn create_with_flags(
                 let end_pos = archive_file
                     .stream_position()
                     .map_err(wrap_io_err!(path, "Getting file position"))?;
-                (ulen, end_pos - start_pos, hash)
+                (ulen, end_pos - start_pos, rlen, hash)
             }
             Mode::SYMLINK => {
                 let destination =
@@ -192,9 +188,9 @@ pub fn create_with_flags(
                     .stream_position()
                     .map_err(wrap_io_err!(path, "Getting file position"))?;
                 let mut data = destination.as_os_str().as_bytes();
-                let mut writer =
-                    DataWriter::new(header.flags.packaging(), archive_file, data.len() as u64)
-                        .map_err(wrap_io_err!(path, "Writing entry data size"))?;
+                let rlen = data.len() as u64;
+                let mut writer = DataWriter::new(header.flags.packaging(), archive_file, rlen)
+                    .map_err(wrap_io_err!(path, "Writing entry data size"))?;
                 let (ulen, hash) = copy_and_hash(&mut data, &mut writer, &mut buf)
                     .map_err(wrap_io_err!(path, "Writing data to archive"))?;
                 archive_file = writer
@@ -203,16 +199,16 @@ pub fn create_with_flags(
                 let end_pos = archive_file
                     .stream_position()
                     .map_err(wrap_io_err!(path, "Getting file position"))?;
-                (ulen, end_pos - start_pos, hash)
+                (ulen, end_pos - start_pos, rlen, hash)
             }
             _ => {
                 return Err(Error::from(pkgar_core::Error::InvalidMode(mode.bits())));
             }
         };
-        if ulen != entry.size() {
+        if ulen != rlen {
             return Err(Error::LengthMismatch {
                 actual: ulen,
-                expected: entry.size(),
+                expected: rlen,
             });
         }
 
@@ -325,9 +321,9 @@ pub fn split(
 
     let pkey = PublicKeyFile::open(pkey_path)?.pkey;
 
-    let package = PackageFile::new(archive_path, &pkey)?;
-    let data_offset = package.header().total_size()?;
-    let mut src = package.src.into_inner();
+    let mut package = PackageFile::new(archive_path, &pkey)?;
+    let data_offset = package.header().total_size()? as u64;
+    let mut src = package.take_reader()?;
 
     if let Some(data_path) = data_path_opt {
         let data_path = data_path.as_ref();
@@ -389,26 +385,28 @@ pub fn verify(
 ) -> Result<(), Error> {
     let pkey = PublicKeyFile::open(pkey_path)?.pkey;
 
-    let mut package = PackageFile::new(archive_path, &pkey)?;
+    let mut package = PackageFile::new(&archive_path, &pkey)?;
+    let entries = package.read_entries()?;
+    let mut pkg_file = package.take_reader()?;
+    let header = package.header();
 
     let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
-    for entry in package.read_entries()? {
+    for entry in entries {
         let expected_path = base_dir.as_ref().join(entry.check_path()?);
 
-        let expected = File::open(&expected_path).map_err(|source| Error::Io {
-            source,
-            path: Some(expected_path.to_path_buf()),
-            context: "Opening file",
-        })?;
+        let mut expected =
+            File::open(&expected_path).map_err(wrap_io_err!(expected_path, "Opening file"))?;
 
-        let (count, hash) =
-            copy_and_hash(expected, io::sink(), &mut buf).map_err(|source| Error::Io {
-                source,
-                path: Some(expected_path.to_path_buf()),
-                context: "Writing file to to black hole",
-            })?;
+        let (count, hash) = copy_and_hash(&mut expected, &mut io::sink(), &mut buf)
+            .map_err(wrap_io_err!(expected_path, "Writing file to to black hole"))?;
 
-        entry.verify(hash, count)?;
+        // TODO: Just the head is enough for uncompressed, but requires full data for compressed pkgar
+        let reader = DataReader::new_with_seek(&header, pkg_file, &entry).map_err(wrap_io_err!(
+            archive_path.as_ref(),
+            "Reading pkg data (make sure to provide full package instead of just head)"
+        ))?;
+        entry.verify(hash, count, &reader)?;
+        pkg_file = reader.into_inner();
     }
     Ok(())
 }

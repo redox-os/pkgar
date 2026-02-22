@@ -42,9 +42,18 @@ pub enum Error {
     },
     #[error("Entry size mismatch: expected {expected}; got {actual}")]
     LengthMismatch { actual: u64, expected: u64 },
+    #[error("Data not initialized.")]
+    DataNotInitialized,
 }
 
 macro_rules! wrap_io_err {
+    ($context:expr) => {
+        |source| Error::Io {
+            source,
+            path: None,
+            context: $context,
+        }
+    };
     ($path:expr, $context:expr) => {
         |source| Error::Io {
             source,

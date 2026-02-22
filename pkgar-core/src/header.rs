@@ -2,10 +2,10 @@
 
 use alloc::vec;
 use bytemuck::{Pod, PodCastError, Zeroable};
-use core::{convert::TryFrom, mem};
+use core::mem;
 use dryoc::classic::crypto_sign::crypto_sign_open;
 
-use crate::{Entry, Error, HeaderFlags, PublicKey};
+use crate::{Entry, Error, HeaderFlags, PublicKey, ENTRY_SIZE, HEADER_SIZE};
 
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 #[repr(packed, C)]
@@ -58,24 +58,22 @@ impl Header {
     }
 
     /// Retrieve the size of the entries
-    pub fn entries_size(&self) -> Result<u64, Error> {
-        let entry_size = u64::try_from(mem::size_of::<Entry>())?;
-        u64::from(self.count)
-            .checked_mul(entry_size)
+    pub fn entries_size(&self) -> Result<usize, Error> {
+        (self.count as usize)
+            .checked_mul(ENTRY_SIZE)
             .ok_or(Error::Overflow)
     }
 
     /// Retrieve the size of the Header and its entries
-    pub fn total_size(&self) -> Result<u64, Error> {
-        let header_size = u64::try_from(mem::size_of::<Header>())?;
+    pub fn total_size(&self) -> Result<usize, Error> {
         self.entries_size()?
-            .checked_add(header_size)
+            .checked_add(HEADER_SIZE)
             .ok_or(Error::Overflow)
     }
 
     /// Parse entries from raw entries data and verify using blake3
     pub fn entries<'a>(&self, data: &'a [u8]) -> Result<&'a [Entry], Error> {
-        let entries_size = usize::try_from(self.entries_size()?)?;
+        let entries_size = self.entries_size()?;
 
         let entries_data = data
             .get(..entries_size)
