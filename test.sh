@@ -68,11 +68,10 @@ time target/$build/pkgar \
     --archive target/test/src.pkgar \
     target/test/src
 
-# TODO: Cannot verify with pkgar_head for compressed packaging
 time target/$build/pkgar \
     verify \
     --pkey target/test/public.toml \
-    --archive target/test/src.pkgar \
+    --archive target/test/src.pkgar_head \
     target/test/src
 
 time target/$build/pkgar \

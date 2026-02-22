@@ -4,6 +4,7 @@ use std::fs::File;
 use std::io::{self, Read, Seek, Take, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path};
+use std::u64;
 
 use blake3::{Hash, Hasher};
 use pkgar_core::{Entry, Header, PackageSrc, Packaging};
@@ -42,7 +43,7 @@ impl EntryExt for Entry {
 
     /// Verify is extracted blake3 or compressed size is correct
     fn verify<R>(&self, blake3: Hash, size: u64, reader: &DataReader<R>) -> Result<(), Error> {
-        if size != reader.unpacked_size {
+        if size != reader.unpacked_size && reader.unpacked_size != u64::MAX {
             Err(Error::LengthMismatch {
                 actual: size,
                 expected: reader.unpacked_size,
@@ -129,8 +130,12 @@ impl<R: Read + Seek> DataReader<R> {
         let inner = match header.flags.packaging() {
             Packaging::LZMA2 => {
                 let mut ulen_buf = [0u8; size_of::<u64>()];
-                file.read_exact(&mut ulen_buf)?;
-                unpacked_size = u64::from_le_bytes(ulen_buf);
+                // failure to read len is allowed for "verify" purpose
+                if file.read_exact(&mut ulen_buf).is_ok() {
+                    unpacked_size = u64::from_le_bytes(ulen_buf);
+                } else {
+                    unpacked_size = u64::MAX;
+                }
                 let decoder = lzma_rust2::Lzma2Reader::new(
                     file.take(len),
                     // same dict size with writer
