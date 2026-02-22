@@ -6,12 +6,12 @@ use bytemuck::Zeroable;
 use pkgar_core::{Header, PackageSrc, PublicKey};
 
 use crate::ext::PackageSrcExt;
-use crate::Error;
+use crate::{wrap_io_err, Error};
 
 #[derive(Debug)]
 pub struct PackageFile {
     path: PathBuf,
-    pub(crate) src: BufReader<File>,
+    src: Option<BufReader<File>>,
     header: Header,
 }
 
@@ -30,7 +30,7 @@ impl PackageFile {
 
         let mut new = PackageFile {
             path,
-            src: BufReader::new(file),
+            src: Some(BufReader::new(file)),
 
             // Need a blank header to construct the PackageFile, since we need to
             //   use a method of PackageSrc in order to get the actual header...
@@ -50,24 +50,36 @@ impl PackageSrc for PackageFile {
     }
 
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Err> {
-        self.src
-            .seek(SeekFrom::Start(offset))
-            .map_err(|source| Error::Io {
-                source,
-                path: None,
-                context: "Seel",
-            })?;
-        self.src.read_exact(buf).map_err(|source| Error::Io {
-            source,
-            path: None,
-            context: "Read",
-        })?;
+        let Some(src) = &mut self.src else {
+            return Err(Error::DataNotInitialized);
+        };
+        src.seek(SeekFrom::Start(offset))
+            .map_err(wrap_io_err!("Seek at read_at"))?;
+        src.read_exact(buf)
+            .map_err(wrap_io_err!("Read at read_at"))?;
         Ok(buf.len())
     }
 }
 
-impl PackageSrcExt for PackageFile {
+impl PackageSrcExt<File> for PackageFile {
     fn path(&self) -> &Path {
         &self.path
+    }
+
+    fn take_reader(&mut self) -> Result<File, Error> {
+        match self.src.take() {
+            Some(reader) => Ok(reader.into_inner()),
+            None => Err(Error::DataNotInitialized),
+        }
+    }
+
+    fn restore_reader(&mut self, reader: File) -> Result<(), Error> {
+        match self.src {
+            Some(_) => Err(Error::Core(pkgar_core::Error::NotSupported)),
+            ref mut src => {
+                *src = Some(BufReader::new(reader));
+                Ok(())
+            }
+        }
     }
 }

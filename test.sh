@@ -5,6 +5,11 @@ if [[ "$1" == "-d" ]]; then
     build=debug
 fi
 
+create_flag=
+if [[ "$1" == "-c" ]]; then
+    create_flag=-c
+fi
+
 set -ex
 
 rm -rf target/test
@@ -22,10 +27,12 @@ time target/$build/pkgar-keys gen \
     --plaintext
 
 time target/$build/pkgar \
-    create \
+    create $create_flag \
     --skey target/test/secret.toml \
     --archive target/test/src.pkgar \
     pkgar/src
+
+stat -c %s target/test/src.pkgar
 
 time target/$build/pkgar \
     list \
@@ -38,6 +45,9 @@ time target/$build/pkgar \
     --archive target/test/src.pkgar \
     target/test/src.pkgar_head \
     target/test/src.pkgar_data
+
+stat -c %s target/test/src.pkgar_head
+stat -c %s target/test/src.pkgar_data
 
 time target/$build/pkgar \
     list \

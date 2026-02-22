@@ -9,7 +9,7 @@ use blake3::Hash;
 use pkgar_core::{Mode, PackageSrc};
 
 use crate::ext::{copy_and_hash, EntryExt, PackageSrcExt};
-use crate::{Error, READ_WRITE_HASH_BUF_SIZE};
+use crate::{wrap_io_err, Error, READ_WRITE_HASH_BUF_SIZE};
 
 fn file_exists(path: impl AsRef<Path>) -> Result<bool, Error> {
     let path = path.as_ref();
@@ -106,7 +106,7 @@ pub struct Transaction {
 impl Transaction {
     pub fn install<Pkg>(src: &mut Pkg, base_dir: impl AsRef<Path>) -> Result<Self, Error>
     where
-        Pkg: PackageSrc<Err = Error> + PackageSrcExt,
+        Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
     {
         let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
 
@@ -126,6 +126,7 @@ impl Transaction {
             let tmp_path = temp_path(&target_path, entry.blake3())?;
 
             let mode = entry.mode().map_err(Error::from)?;
+            let mut data_reader = src.data_reader(entry)?;
 
             let (entry_data_size, entry_data_hash) = match mode.kind() {
                 Mode::FILE => {
@@ -136,39 +137,22 @@ impl Transaction {
                         .truncate(true)
                         .mode(mode.perm().bits())
                         .open(&tmp_path)
-                        .map_err(|source| Error::Io {
-                            source,
-                            path: Some(tmp_path.to_path_buf()),
-                            context: "Opening tempfile",
-                        })?;
+                        .map_err(wrap_io_err!(tmp_path, "Opening tempfile"))?;
 
-                    let (size, hash) =
-                        copy_and_hash(src.entry_reader(entry), &mut tmp_file, &mut buf).map_err(
-                            |source| Error::Io {
-                                source,
-                                path: Some(tmp_path.to_path_buf()),
-                                context: "Copying entry to tempfile",
-                            },
-                        )?;
+                    let (size, hash) = copy_and_hash(&mut data_reader, &mut tmp_file, &mut buf)
+                        .map_err(wrap_io_err!(tmp_path, "Copying entry to tempfile"))?;
 
                     actions.push(Action::Rename(tmp_path, target_path));
                     (size, hash)
                 }
                 Mode::SYMLINK => {
                     let mut data = Vec::new();
-                    let (size, hash) = copy_and_hash(src.entry_reader(entry), &mut data, &mut buf)
-                        .map_err(|source| Error::Io {
-                            source,
-                            path: Some(tmp_path.to_path_buf()),
-                            context: "Copying entry to tempfile",
-                        })?;
+                    let (size, hash) = copy_and_hash(&mut data_reader, &mut data, &mut buf)
+                        .map_err(wrap_io_err!(tmp_path, "Copying entry to tempfile"))?;
 
                     let sym_target = Path::new(OsStr::from_bytes(&data));
-                    symlink(sym_target, &tmp_path).map_err(|source| Error::Io {
-                        source,
-                        path: Some(sym_target.to_path_buf()),
-                        context: "Symlinking to tmp",
-                    })?;
+                    symlink(sym_target, &tmp_path)
+                        .map_err(wrap_io_err!(tmp_path, "Symlinking to tmp"))?;
                     actions.push(Action::Rename(tmp_path, target_path));
                     (size, hash)
                 }
@@ -177,7 +161,8 @@ impl Transaction {
                 }
             };
 
-            entry.verify(entry_data_hash, entry_data_size)?;
+            entry.verify(entry_data_hash, entry_data_size, &data_reader)?;
+            data_reader.finish(src)?;
         }
         Ok(Transaction { actions })
     }
@@ -188,7 +173,7 @@ impl Transaction {
         base_dir: impl AsRef<Path>,
     ) -> Result<Transaction, Error>
     where
-        Pkg: PackageSrc<Err = Error> + PackageSrcExt,
+        Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
     {
         let old_entries = old.read_entries()?;
         let new_entries = new.read_entries()?;
@@ -232,17 +217,19 @@ impl Transaction {
                 "target path was not in the base path"
             );
 
-            let candidate = File::open(&target_path).map_err(|source| Error::Io {
+            let mut candidate = File::open(&target_path).map_err(|source| Error::Io {
                 source,
                 path: Some(target_path.clone()),
                 context: "Opening candidate",
             })?;
 
             // Ensure that the deletion candidate on disk has not been modified
-            copy_and_hash(candidate, io::sink(), &mut buf).map_err(|source| Error::Io {
-                source,
-                path: Some(target_path.clone()),
-                context: "Hashing file for entry",
+            copy_and_hash(&mut candidate, &mut io::sink(), &mut buf).map_err(|source| {
+                Error::Io {
+                    source,
+                    path: Some(target_path.clone()),
+                    context: "Hashing file for entry",
+                }
             })?;
 
             actions.push(Action::Remove(target_path));

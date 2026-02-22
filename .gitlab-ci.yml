@@ -1,0 +1,27 @@
+stages:
+  - lint
+  - test
+
+variables:
+  GIT_SUBMODULE_STRATEGY: "recursive"
+
+workflow:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "master"'
+    - if: '$CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "master"'
+
+fmt:
+  image: "rust:latest"
+  stage: lint
+  script:
+    - rustup component add rustfmt
+    - cargo fmt -- --check
+
+sh-test:
+  image: "rust:latest"
+  stage: test
+  script:
+    - cargo test --locked
+    - cargo test --locked --all-features
+    - ./test.sh
+    - ./test.sh -c
