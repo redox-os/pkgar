@@ -1,6 +1,6 @@
 [package]
 name = "pkgar"
-version = "0.1.19"
+version.workspace = true
 description = "Redox Package Archive"
 license = "MIT"
 authors = ["Jeremy Soller <jackpot51@gmail.com>", "Wesley Hershberger <mggmugginsmc@gmail.com>"]
@@ -14,8 +14,8 @@ required-features = ["cli"]
 [dependencies]
 bytemuck = {version = "1", features = ["derive"]}
 lzma-rust2 = "0.16.2"
-pkgar-core = {version = "0.1.19", path = "../pkgar-core"}
-pkgar-keys = {version = "0.1.19", path = "../pkgar-keys"}
+pkgar-core = {path = "../pkgar-core"}
+pkgar-keys = {path = "../pkgar-keys"}
 thiserror = "2"
 
 [dependencies.clap]
