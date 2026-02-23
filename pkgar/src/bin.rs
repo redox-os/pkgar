@@ -1,5 +1,5 @@
-use std::fs::{self, File};
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::fs;
+use std::io::{self, Seek, SeekFrom, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -10,10 +10,10 @@ use pkgar_core::{
 };
 use pkgar_keys::PublicKeyFile;
 
-use crate::ext::{copy_and_hash, DataReader, DataWriter, EntryExt, PackageSrcExt};
+use crate::ext::{copy_and_hash, DataWriter, EntryExt};
 use crate::package::PackageFile;
 use crate::transaction::Transaction;
-use crate::{wrap_io_err, Error, READ_WRITE_HASH_BUF_SIZE};
+use crate::{wrap_io_err, Error};
 
 fn folder_entries<P, Q>(base: P, path: Q, entries: &mut Vec<Entry>) -> io::Result<()>
 where
@@ -318,64 +318,11 @@ pub fn split(
     let pkey_path = pkey_path.as_ref();
     let archive_path = archive_path.as_ref();
     let head_path = head_path.as_ref();
+    let data_path_opt = data_path_opt.as_ref();
 
     let pkey = PublicKeyFile::open(pkey_path)?.pkey;
-
     let mut package = PackageFile::new(archive_path, &pkey)?;
-    let data_offset = package.header().total_size()? as u64;
-    let mut src = package.take_reader()?;
-
-    if let Some(data_path) = data_path_opt {
-        let data_path = data_path.as_ref();
-        let mut data_file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(data_path)
-            .map_err(|source| Error::Io {
-                source,
-                path: Some(data_path.to_path_buf()),
-                context: "Opening data",
-            })?;
-
-        src.seek(SeekFrom::Start(data_offset))
-            .map_err(|source| Error::Io {
-                source,
-                path: Some(archive_path.to_path_buf()),
-                context: "Seeking data",
-            })?;
-        io::copy(&mut src, &mut data_file).map_err(|source| Error::Io {
-            source,
-            path: Some(head_path.to_path_buf()),
-            context: "Writing data",
-        })?;
-    }
-
-    {
-        let mut head_file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(head_path)
-            .map_err(|source| Error::Io {
-                source,
-                path: Some(head_path.to_path_buf()),
-                context: "Opening head",
-            })?;
-
-        src.seek(SeekFrom::Start(0)).map_err(|source| Error::Io {
-            source,
-            path: Some(archive_path.to_path_buf()),
-            context: "Seeking head",
-        })?;
-        io::copy(&mut src.take(data_offset), &mut head_file).map_err(|source| Error::Io {
-            source,
-            path: Some(head_path.to_path_buf()),
-            context: "Writing head",
-        })?;
-    }
-
-    Ok(())
+    package.split(head_path, data_path_opt.map(|p| p.as_ref()))
 }
 
 pub fn verify(
@@ -386,27 +333,5 @@ pub fn verify(
     let pkey = PublicKeyFile::open(pkey_path)?.pkey;
 
     let mut package = PackageFile::new(&archive_path, &pkey)?;
-    let entries = package.read_entries()?;
-    let mut pkg_file = package.take_reader()?;
-    let header = package.header();
-
-    let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
-    for entry in entries {
-        let expected_path = base_dir.as_ref().join(entry.check_path()?);
-
-        let mut expected =
-            File::open(&expected_path).map_err(wrap_io_err!(expected_path, "Opening file"))?;
-
-        let (count, hash) = copy_and_hash(&mut expected, &mut io::sink(), &mut buf)
-            .map_err(wrap_io_err!(expected_path, "Writing file to to black hole"))?;
-
-        // TODO: Just the head is enough for uncompressed, but requires full data for compressed pkgar
-        let reader = DataReader::new_with_seek(&header, pkg_file, &entry).map_err(wrap_io_err!(
-            archive_path.as_ref(),
-            "Reading pkg data (make sure to provide full package instead of just head)"
-        ))?;
-        entry.verify(hash, count, &reader)?;
-        pkg_file = reader.into_inner();
-    }
-    Ok(())
+    package.verify(base_dir.as_ref())
 }

@@ -84,6 +84,10 @@ pub struct PublicKeyFile {
 }
 
 impl PublicKeyFile {
+    pub fn new(pubkey: PublicKey) -> Self {
+        Self { pkey: pubkey }
+    }
+
     /// Parse a `PublicKeyFile` from `file` (in toml format).
     pub fn open(file: impl AsRef<Path>) -> Result<PublicKeyFile, Error> {
         let content = fs::read_to_string(file).map_err(|source| Error::Io {
