@@ -1,12 +1,12 @@
-use std::fs::{File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use bytemuck::Zeroable;
 use pkgar_core::{Header, PackageSrc, PublicKey};
 
-use crate::ext::PackageSrcExt;
-use crate::{wrap_io_err, Error};
+use crate::ext::{copy_and_hash, DataReader, EntryExt, PackageSrcExt};
+use crate::{wrap_io_err, Error, READ_WRITE_HASH_BUF_SIZE};
 
 #[derive(Debug)]
 pub struct PackageFile {
@@ -39,6 +39,58 @@ impl PackageFile {
 
         new.header = new.read_header(public_key)?;
         Ok(new)
+    }
+
+    pub fn split(&mut self, head_path: &Path, data_path_opt: Option<&Path>) -> Result<(), Error> {
+        let data_offset = self.header().total_size()? as u64;
+        let mut src = self.take_reader()?;
+
+        if let Some(data_path) = data_path_opt {
+            let mut data_file =
+                fs::File::create(data_path).map_err(wrap_io_err!(data_path, "Opening data"))?;
+            src.seek(SeekFrom::Start(data_offset))
+                .map_err(wrap_io_err!(data_path, "Seeking data"))?;
+            std::io::copy(&mut src, &mut data_file)
+                .map_err(wrap_io_err!(data_path, "Writing data"))?;
+        }
+        {
+            let mut head_file =
+                fs::File::create(head_path).map_err(wrap_io_err!(head_path, "Opening head"))?;
+            src.seek(SeekFrom::Start(0))
+                .map_err(wrap_io_err!(head_path, "Seeking head"))?;
+            let mut src_taken = src.take(data_offset);
+            std::io::copy(&mut src_taken, &mut head_file)
+                .map_err(wrap_io_err!(head_path, "Writing head"))?;
+            self.restore_reader(src_taken.into_inner())?;
+        }
+
+        Ok(())
+    }
+
+    pub fn verify(&mut self, base_dir: &Path) -> Result<(), Error> {
+        let entries = self.read_entries()?;
+        let mut pkg_file = self.take_reader()?;
+        let header = self.header();
+
+        let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
+        for entry in entries {
+            let expected_path = base_dir.join(entry.check_path()?);
+
+            let mut expected =
+                File::open(&expected_path).map_err(wrap_io_err!(expected_path, "Opening file"))?;
+
+            let (count, hash) = copy_and_hash(&mut expected, &mut std::io::sink(), &mut buf)
+                .map_err(wrap_io_err!(expected_path, "Writing file to to black hole"))?;
+
+            let reader = DataReader::new_with_seek(&header, pkg_file, &entry)
+                .map_err(wrap_io_err!(self.path, "Reading pkg data"))?;
+            entry.verify(hash, count, &reader)?;
+            pkg_file = reader.into_inner();
+        }
+
+        self.restore_reader(pkg_file)?;
+
+        Ok(())
     }
 }
 
