@@ -8,6 +8,6 @@ repository = "https://gitlab.redox-os.org/redox-os/pkgar"
 edition = "2021"
 
 [dependencies]
-pkgar = { path = "../pkgar" }
-pkgar-core = { path = "../pkgar-core" }
+pkgar = { path = "../pkgar", version = "0.2.0" }
+pkgar-core = { path = "../pkgar-core", version = "0.2.0" }
 reqwest = { version = "0.11", default-features = false, features = ["blocking", "rustls-tls"] }
