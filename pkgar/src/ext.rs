@@ -66,9 +66,8 @@ where
     Self: PackageSrc + Sized,
     R: Read + Seek,
 {
-    /// Get the path corresponding to this `PackageSrc`. This will likely be
-    /// refactored to use something more generic than `Path` in future.
-    fn path(&self) -> &Path;
+    /// Get the path corresponding to this `PackageSrc`.
+    fn path(&self) -> std::borrow::Cow<'_, str>;
 
     /// Take the underlying reader out into the data reader
     fn take_reader(&mut self) -> Result<R, Error>;
