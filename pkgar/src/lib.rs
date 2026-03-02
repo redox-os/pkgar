@@ -27,7 +27,7 @@ pub enum Error {
         path: Option<PathBuf>,
         context: &'static str,
     },
-    #[error("Failed to commit transaction. {changed} files changed; {remaining} files remaining")]
+    #[error("Failed to commit transaction ({changed} files changed, {remaining} files remaining): {source}")]
     FailedCommit {
         #[source]
         source: Box<Self>,
