@@ -114,8 +114,8 @@ impl PackageSrc for PackageFile {
 }
 
 impl PackageSrcExt<File> for PackageFile {
-    fn path(&self) -> &Path {
-        &self.path
+    fn path(&self) -> std::borrow::Cow<'_, str> {
+        self.path.to_string_lossy()
     }
 
     fn take_reader(&mut self) -> Result<File, Error> {

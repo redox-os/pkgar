@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io;
@@ -65,7 +66,9 @@ fn temp_path(target_path: impl AsRef<Path>, entry_hash: Hash) -> Result<PathBuf,
     Ok(parent_dir.join(tmp_name))
 }
 
-enum Action {
+/// Individual atomic file operation
+#[derive(Clone, Debug)]
+pub enum Action {
     /// Temp files (`.pkgar.*`) to target files
     Rename(PathBuf, PathBuf),
     Remove(PathBuf),
@@ -97,13 +100,31 @@ impl Action {
             Action::Remove(_) => Ok(()),
         }
     }
+
+    /// Returns the file path it's targeting into
+    pub fn target_file(&self) -> &Path {
+        match self {
+            Action::Rename(_, path) => path.as_path(),
+            Action::Remove(path) => path.as_path(),
+        }
+    }
 }
 
+/// A struct that holds many atomic file operation
 pub struct Transaction {
     actions: Vec<Action>,
+    committed: usize,
 }
 
 impl Transaction {
+    fn new(actions: Vec<Action>) -> Self {
+        Self {
+            actions,
+            committed: 0,
+        }
+    }
+
+    /// Prepare transactions to install from a pkgar file
     pub fn install<Pkg>(src: &mut Pkg, base_dir: impl AsRef<Path>) -> Result<Self, Error>
     where
         Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
@@ -130,7 +151,7 @@ impl Transaction {
 
             let (entry_data_size, entry_data_hash) = match mode.kind() {
                 Mode::FILE => {
-                    //TODO: decide what to do when temp files are left over
+                    // Tempfiles will be overwritten, users should use MergedTransaction to handle transaction conflicts
                     let mut tmp_file = fs::OpenOptions::new()
                         .write(true)
                         .create(true)
@@ -164,9 +185,10 @@ impl Transaction {
             entry.verify(entry_data_hash, entry_data_size, &data_reader)?;
             data_reader.finish(src)?;
         }
-        Ok(Transaction { actions })
+        Ok(Transaction::new(actions))
     }
 
+    /// Prepare transactions to replace old files from a pkgar file
     pub fn replace<Pkg>(
         old: &mut Pkg,
         new: &mut Pkg,
@@ -198,6 +220,7 @@ impl Transaction {
         Ok(trans)
     }
 
+    /// Prepare transactions to remove files from a pkgar file
     pub fn remove<Pkg>(pkg: &mut Pkg, base_dir: impl AsRef<Path>) -> Result<Transaction, Error>
     where
         Pkg: PackageSrc<Err = Error>,
@@ -234,24 +257,36 @@ impl Transaction {
 
             actions.push(Action::Remove(target_path));
         }
-        Ok(Transaction { actions })
+        Ok(Transaction::new(actions))
     }
 
+    /// Apply all pending actions from end to start.
+    /// This resets the committed counter back to zero.
+    /// if failed abort() is needed to clean up pending transaction.
     pub fn commit(&mut self) -> Result<usize, Error> {
-        let mut count = 0;
-        while let Some(action) = self.actions.pop() {
+        self.reset_committed();
+        while self.actions.len() > 0 {
+            self.commit_one()?;
+        }
+        Ok(self.committed)
+    }
+
+    /// Apply one last item from actions stack,
+    /// returns how many transactions committed since last counter reset.
+    pub fn commit_one(&mut self) -> Result<usize, Error> {
+        if let Some(action) = self.actions.pop() {
             if let Err(err) = action.commit() {
                 // Should be possible to restart a failed transaction
                 self.actions.push(action);
                 return Err(Error::FailedCommit {
                     source: Box::new(err),
-                    changed: count,
+                    changed: self.committed,
                     remaining: self.actions.len(),
                 });
             }
-            count += 1;
+            self.committed += 1;
         }
-        Ok(count)
+        Ok(self.committed)
     }
 
     /// Clean up any tmp files referenced by this transaction without committing.
@@ -259,24 +294,127 @@ impl Transaction {
     /// to abort them all will it return an error with context info. Remaining actions
     /// are left as a part of this transaction to allow for re-runs of this function.
     pub fn abort(&mut self) -> Result<usize, Error> {
-        let mut count = 0;
         let mut last_failed = false;
-        while let Some(action) = self.actions.pop() {
-            if let Err(err) = action.abort() {
-                // This is inherently inefficent, no biggie
-                self.actions.insert(0, action);
+        self.reset_committed();
+        while self.actions.len() > 0 {
+            if let Err(err) = self.abort_one() {
                 if last_failed {
-                    return Err(Error::FailedCommit {
-                        source: Box::new(err),
-                        changed: count,
-                        remaining: self.actions.len(),
-                    });
+                    return Err(err);
                 } else {
                     last_failed = true;
                 }
             }
-            count += 1;
         }
-        Ok(count)
+        Ok(self.committed)
     }
+
+    /// Abort one last item from actions stack
+    pub fn abort_one(&mut self) -> Result<usize, Error> {
+        if let Some(action) = self.actions.pop() {
+            if let Err(err) = action.abort() {
+                // This is inherently inefficent, no biggie
+                self.actions.insert(0, action);
+                return Err(Error::FailedCommit {
+                    source: Box::new(err),
+                    changed: self.committed,
+                    remaining: self.actions.len(),
+                });
+            }
+            self.committed += 1;
+        }
+        Ok(self.committed)
+    }
+
+    /// Get how much actions are pending
+    pub fn pending_commit(&self) -> usize {
+        self.actions.len()
+    }
+
+    /// Get how much actions committed.
+    /// Aborted actions also counts.
+    pub fn total_committed(&self) -> usize {
+        self.committed
+    }
+
+    /// Resets committed counter
+    pub fn reset_committed(&mut self) {
+        self.committed = 0;
+    }
+
+    /// Peek pending actions.
+    /// Actions are executed from last item.
+    pub fn get_actions(&self) -> &Vec<Action> {
+        &self.actions
+    }
+}
+
+/// A struct that helps merging multiple transaction into one.
+/// All transactions are validated to make sure there's no two action holding the same target file.
+pub struct MergedTransaction {
+    actions: Vec<Action>,
+    path_map: BTreeMap<PathBuf, Option<String>>,
+    possible_conflicts: Vec<TransactionConflict>,
+}
+
+impl MergedTransaction {
+    pub fn new() -> Self {
+        MergedTransaction {
+            actions: Vec::new(),
+            path_map: BTreeMap::new(),
+            possible_conflicts: Vec::new(),
+        }
+    }
+    fn push_action<Pkg>(&mut self, action: Action, src: Option<&Pkg>)
+    where
+        Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
+    {
+        let action_key = action.target_file();
+        match self.path_map.entry(action_key.to_path_buf()) {
+            std::collections::btree_map::Entry::Vacant(vacant_entry) => {
+                vacant_entry.insert(src.map(|s| s.path().to_string()));
+                self.actions.push(action);
+            }
+            std::collections::btree_map::Entry::Occupied(occupied_entry) => {
+                // When conflicts happened, it's assumed to be overwritten
+                // However the order doesn't matter, so actions is not touched
+                self.possible_conflicts.push(TransactionConflict {
+                    conflicted_path: action_key.to_path_buf(),
+                    former_src: occupied_entry.get().clone(),
+                    newer_src: src.map(|s| s.path().to_string()),
+                });
+            }
+        }
+    }
+
+    /// Add a newer transaction with their source package for optional conflict identification
+    pub fn merge<Pkg>(&mut self, newer: Transaction, src: Option<&Pkg>)
+    where
+        Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
+    {
+        for action in newer.actions {
+            self.push_action(action, src);
+        }
+    }
+
+    /// Get list of conflicted actions and their sources if given.
+    /// The action that is actually used will be the newer one.
+    pub fn get_possible_conflicts(&self) -> &Vec<TransactionConflict> {
+        &self.possible_conflicts
+    }
+
+    /// Peek into held actions
+    pub fn get_actions(&self) -> &Vec<Action> {
+        &self.actions
+    }
+
+    /// Convert into single giant transaction
+    pub fn into_transaction(self) -> Transaction {
+        Transaction::new(self.actions)
+    }
+}
+
+pub struct TransactionConflict {
+    pub conflicted_path: PathBuf,
+    pub former_src: Option<String>,
+    pub newer_src: Option<String>,
 }
