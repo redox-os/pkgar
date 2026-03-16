@@ -115,13 +115,13 @@ impl Transaction {
     }
 
     /// Prepare transactions to install from a pkgar file.
-    /// Overwrites any existing file.
+    /// Overwrites any existing file (customizable with `install_with_entries`).
     pub fn install<Pkg>(src: &mut Pkg, base_dir: impl AsRef<Path>) -> Result<Self, Error>
     where
         Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
     {
         let entries = src.read_entries()?;
-        Self::install_with_entries(src, entries, base_dir)
+        Self::install_with_entries(src, entries, base_dir, true)
     }
 
     /// Prepare transactions to install from a pkgar file with filtered or modified entries
@@ -129,6 +129,7 @@ impl Transaction {
         src: &mut Pkg,
         entries: Vec<Entry>,
         base_dir: impl AsRef<Path>,
+        skip_local_check: bool,
     ) -> Result<Self, Error>
     where
         Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
@@ -137,7 +138,7 @@ impl Transaction {
 
         let mut actions = Vec::with_capacity(entries.len());
 
-        for entry in entries {
+        for entry in &entries {
             let relative_path = entry.check_path()?;
 
             let target_path = base_dir.as_ref().join(relative_path);
@@ -150,7 +151,7 @@ impl Transaction {
             let tmp_path = temp_path(&target_path, entry.blake3())?;
 
             let mode = entry.mode().map_err(Error::from)?;
-            let mut data_reader = src.data_reader(entry)?;
+            let mut data_reader = src.data_reader(&entry)?;
 
             let (entry_data_size, entry_data_hash) = match mode.kind() {
                 Mode::FILE => {
@@ -201,6 +202,34 @@ impl Transaction {
             entry.verify(entry_data_hash, entry_data_size, &data_reader)?;
             data_reader.finish(src)?;
         }
+
+        if !skip_local_check {
+            // Do not overwrite locally modified install.
+            let mut allowed_install_actions = Vec::with_capacity(actions.len());
+            let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
+
+            for (i, action) in actions.into_iter().enumerate() {
+                let target_path = action.target_file();
+                if !target_path.is_file() {
+                    allowed_install_actions.push(action);
+                    continue;
+                }
+                let mut candidate = File::open(&target_path)
+                    .map_err(wrap_io_err!(target_path, "Opening candidate"))?;
+
+                // Ensure that the deletion candidate on disk has not been modified
+                let (_, entry_data_hash) = copy_and_hash(&mut candidate, &mut io::sink(), &mut buf)
+                    .map_err(wrap_io_err!(target_path, "Hashing file for entry"))?;
+
+                if entry_data_hash == entries[i].blake3() {
+                    allowed_install_actions.push(action);
+                } else {
+                    action.abort()?;
+                }
+            }
+            actions = allowed_install_actions;
+        }
+
         Ok(Transaction::new(actions))
     }
 
@@ -226,7 +255,7 @@ impl Transaction {
         new_entries: Vec<Entry>,
         new: &mut Pkg,
         base_dir: impl AsRef<Path>,
-        skip_check: bool,
+        skip_local_check: bool,
     ) -> Result<Transaction, Error>
     where
         Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
@@ -257,36 +286,14 @@ impl Transaction {
             entries_to_remove.push(old_e);
         }
 
-        let mut trans = Self::install_with_entries(new, entries_to_install.clone(), &base_dir)?;
-        let remove_trans = Self::remove_with_entries(entries_to_remove, &base_dir, skip_check)?;
-
-        if !skip_check {
-            // Do not overwrite locally modified install.
-            // TODO: maybe move this code to `install_with_entries`
-            let mut allowed_install_actions = Vec::with_capacity(trans.actions.len());
-            let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
-
-            for (i, action) in trans.actions.into_iter().enumerate() {
-                let target_path = action.target_file();
-                if !target_path.is_file() {
-                    allowed_install_actions.push(action);
-                    continue;
-                }
-                let mut candidate = File::open(&target_path)
-                    .map_err(wrap_io_err!(target_path, "Opening candidate"))?;
-
-                // Ensure that the deletion candidate on disk has not been modified
-                let (_, entry_data_hash) = copy_and_hash(&mut candidate, &mut io::sink(), &mut buf)
-                    .map_err(wrap_io_err!(target_path, "Hashing file for entry"))?;
-
-                if entry_data_hash == entries_to_install[i].blake3() {
-                    allowed_install_actions.push(action);
-                } else {
-                    action.abort()?;
-                }
-            }
-            trans.actions = allowed_install_actions;
-        }
+        let mut trans = Self::install_with_entries(
+            new,
+            entries_to_install.clone(),
+            &base_dir,
+            skip_local_check,
+        )?;
+        let remove_trans =
+            Self::remove_with_entries(entries_to_remove, &base_dir, skip_local_check)?;
 
         trans.actions.extend(remove_trans.actions);
 
@@ -307,7 +314,7 @@ impl Transaction {
     pub fn remove_with_entries(
         entries: Vec<Entry>,
         base_dir: impl AsRef<Path>,
-        skip_check: bool,
+        skip_local_check: bool,
     ) -> Result<Self, Error> {
         let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
 
@@ -330,7 +337,7 @@ impl Transaction {
             let (_, entry_data_hash) = copy_and_hash(&mut candidate, &mut io::sink(), &mut buf)
                 .map_err(wrap_io_err!(target_path.clone(), "Hashing file for entry"))?;
 
-            if skip_check || entry_data_hash == entry.blake3() {
+            if skip_local_check || entry_data_hash == entry.blake3() {
                 actions.push(Action::Remove(target_path));
             }
         }
