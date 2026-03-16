@@ -238,32 +238,21 @@ pub fn create_with_flags(
     header.signature.copy_from_slice(&signature);
 
     // Write archive header
-    archive_file
-        .seek(SeekFrom::Start(0))
-        .map_err(|source| Error::Io {
-            source,
-            path: Some(archive_path.to_path_buf()),
-            context: "Seeking archive_file back to 0",
-        })?;
+    archive_file.seek(SeekFrom::Start(0)).map_err(wrap_io_err!(
+        archive_path.to_path_buf(),
+        "Seeking archive_file back to 0"
+    ))?;
 
     archive_file
         .write_all(bytemuck::bytes_of(&header))
-        .map_err(|source| Error::Io {
-            source,
-            path: Some(archive_path.to_path_buf()),
-            context: "Writing header",
-        })?;
+        .map_err(wrap_io_err!(archive_path.to_path_buf(), "Writing header"))?;
 
     // Write each entry header
     for entry in &entries {
         let _ = entry.check_path()?;
         archive_file
             .write_all(bytemuck::bytes_of(entry))
-            .map_err(|source| Error::Io {
-                source,
-                path: Some(archive_path.to_path_buf()),
-                context: "Writing entry",
-            })?;
+            .map_err(wrap_io_err!(archive_path.to_path_buf(), "Writing entry"))?;
     }
 
     Ok(())

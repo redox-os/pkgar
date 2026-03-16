@@ -57,11 +57,8 @@ fn temp_path(target_path: impl AsRef<Path>, entry_hash: Hash) -> Result<PathBuf,
         hash_path
     };
 
-    fs::create_dir_all(parent_dir).map_err(|source| Error::Io {
-        source,
-        path: Some(parent_dir.to_path_buf()),
-        context: "Creating dir",
-    })?;
+    fs::create_dir_all(parent_dir)
+        .map_err(wrap_io_err!(parent_dir.to_path_buf(), "Creating dir"))?;
     Ok(parent_dir.join(tmp_name))
 }
 
@@ -76,26 +73,20 @@ pub enum Action {
 impl Action {
     fn commit(&self) -> Result<(), Error> {
         match self {
-            Action::Rename(tmp, target) => fs::rename(tmp, target).map_err(|source| Error::Io {
-                source,
-                path: Some(tmp.to_path_buf()),
-                context: "Renaming file",
-            }),
-            Action::Remove(target) => fs::remove_file(target).map_err(|source| Error::Io {
-                source,
-                path: Some(target.to_path_buf()),
-                context: "Removing file",
-            }),
+            Action::Rename(tmp, target) => {
+                fs::rename(tmp, target).map_err(wrap_io_err!(tmp.to_path_buf(), "Renaming file"))
+            }
+            Action::Remove(target) => {
+                fs::remove_file(target).map_err(wrap_io_err!(target.to_path_buf(), "Removing file"))
+            }
         }
     }
 
     fn abort(&self) -> Result<(), Error> {
         match self {
-            Action::Rename(tmp, _) => fs::remove_file(tmp).map_err(|source| Error::Io {
-                source,
-                path: Some(tmp.to_path_buf()),
-                context: "Removing tempfile",
-            }),
+            Action::Rename(tmp, _) => {
+                fs::remove_file(tmp).map_err(wrap_io_err!(tmp.to_path_buf(), "Removing tempfile"))
+            }
             Action::Remove(_) => Ok(()),
         }
     }
@@ -239,20 +230,12 @@ impl Transaction {
                 "target path was not in the base path"
             );
 
-            let mut candidate = File::open(&target_path).map_err(|source| Error::Io {
-                source,
-                path: Some(target_path.clone()),
-                context: "Opening candidate",
-            })?;
+            let mut candidate = File::open(&target_path)
+                .map_err(wrap_io_err!(target_path.clone(), "Opening candidate"))?;
 
             // Ensure that the deletion candidate on disk has not been modified
-            copy_and_hash(&mut candidate, &mut io::sink(), &mut buf).map_err(|source| {
-                Error::Io {
-                    source,
-                    path: Some(target_path.clone()),
-                    context: "Hashing file for entry",
-                }
-            })?;
+            copy_and_hash(&mut candidate, &mut io::sink(), &mut buf)
+                .map_err(wrap_io_err!(target_path.clone(), "Hashing file for entry"))?;
 
             actions.push(Action::Remove(target_path));
         }
