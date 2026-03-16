@@ -7,7 +7,7 @@ use std::os::unix::fs::{symlink, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 use blake3::Hash;
-use pkgar_core::{Mode, PackageSrc};
+use pkgar_core::{Entry, Mode, PackageSrc};
 
 use crate::ext::{copy_and_hash, EntryExt, PackageSrcExt};
 use crate::{wrap_io_err, Error, READ_WRITE_HASH_BUF_SIZE};
@@ -119,9 +119,21 @@ impl Transaction {
     where
         Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
     {
+        let entries = src.read_entries()?;
+        Self::install_with_entries(src, entries, base_dir)
+    }
+
+    /// Prepare transactions to install from a pkgar file with filtered or modified entries
+    pub fn install_with_entries<Pkg>(
+        src: &mut Pkg,
+        entries: Vec<Entry>,
+        base_dir: impl AsRef<Path>,
+    ) -> Result<Self, Error>
+    where
+        Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
+    {
         let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
 
-        let entries = src.read_entries()?;
         let mut actions = Vec::with_capacity(entries.len());
 
         for entry in entries {
@@ -224,13 +236,21 @@ impl Transaction {
     }
 
     /// Prepare transactions to remove files from a pkgar file
-    pub fn remove<Pkg>(pkg: &mut Pkg, base_dir: impl AsRef<Path>) -> Result<Transaction, Error>
+    pub fn remove<Pkg>(src: &mut Pkg, base_dir: impl AsRef<Path>) -> Result<Self, Error>
     where
         Pkg: PackageSrc<Err = Error>,
     {
+        let entries = src.read_entries()?;
+        Self::remove_with_entries(entries, base_dir)
+    }
+
+    /// Prepare transactions to remove files from a pkgar file with filtered or modified entries
+    pub fn remove_with_entries(
+        entries: Vec<Entry>,
+        base_dir: impl AsRef<Path>,
+    ) -> Result<Self, Error> {
         let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
 
-        let entries = pkg.read_entries()?;
         let mut actions = Vec::with_capacity(entries.len());
 
         for entry in entries {
@@ -247,10 +267,12 @@ impl Transaction {
                 .map_err(wrap_io_err!(target_path.clone(), "Opening candidate"))?;
 
             // Ensure that the deletion candidate on disk has not been modified
-            copy_and_hash(&mut candidate, &mut io::sink(), &mut buf)
+            let (_, entry_data_hash) = copy_and_hash(&mut candidate, &mut io::sink(), &mut buf)
                 .map_err(wrap_io_err!(target_path.clone(), "Hashing file for entry"))?;
 
-            actions.push(Action::Remove(target_path));
+            if entry_data_hash == entry.blake3() {
+                actions.push(Action::Remove(target_path));
+            }
         }
         Ok(Transaction::new(actions))
     }
