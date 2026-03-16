@@ -63,6 +63,15 @@ time target/$build/pkgar \
 diff -ruwN pkgar/src target/test/src
 
 time target/$build/pkgar \
+    replace \
+    --pkey target/test/public.toml \
+    --old-archive target/test/src.pkgar \
+    --archive target/test/src.pkgar \
+    target/test/src
+
+diff -ruwN pkgar/src target/test/src
+
+time target/$build/pkgar \
     verify \
     --pkey target/test/public.toml \
     --archive target/test/src.pkgar \

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io;
@@ -114,7 +114,8 @@ impl Transaction {
         }
     }
 
-    /// Prepare transactions to install from a pkgar file
+    /// Prepare transactions to install from a pkgar file.
+    /// Overwrites any existing file.
     pub fn install<Pkg>(src: &mut Pkg, base_dir: impl AsRef<Path>) -> Result<Self, Error>
     where
         Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
@@ -203,7 +204,9 @@ impl Transaction {
         Ok(Transaction::new(actions))
     }
 
-    /// Prepare transactions to replace old files from a pkgar file
+    /// Prepare transactions to replace old files from a pkgar file.
+    /// Does not overwrite existing file if the file is not updated between two package.
+    /// Does not replace or remove existing file if the file is changed locally (customizable with `replace_with_entries`).
     pub fn replace<Pkg>(
         old: &mut Pkg,
         new: &mut Pkg,
@@ -214,40 +217,97 @@ impl Transaction {
     {
         let old_entries = old.read_entries()?;
         let new_entries = new.read_entries()?;
+        Self::replace_with_entries(old_entries, new_entries, new, base_dir, false)
+    }
 
-        // All the files that are present in old but not in new
-        let mut actions = old_entries
-            .iter()
-            .filter(|old_e| {
-                !new_entries
-                    .iter()
-                    .any(|new_e| new_e.blake3() == old_e.blake3())
-            })
-            .map(|e| {
-                let target_path = base_dir.as_ref().join(e.check_path()?);
-                Ok(Action::Remove(target_path))
-            })
-            .collect::<Result<Vec<Action>, Error>>()?;
+    /// Prepare transactions to replace old files from a pkgar file with filtered or modified entries
+    pub fn replace_with_entries<Pkg>(
+        old_entries: Vec<Entry>,
+        new_entries: Vec<Entry>,
+        new: &mut Pkg,
+        base_dir: impl AsRef<Path>,
+        skip_check: bool,
+    ) -> Result<Transaction, Error>
+    where
+        Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
+    {
+        let mut old_map = HashMap::with_capacity(old_entries.len());
+        for entry in old_entries {
+            old_map.insert(entry.check_path()?.to_path_buf(), entry);
+        }
 
-        //TODO: Don't force a re-read of all the entries for the new package
-        let mut trans = Transaction::install(new, base_dir)?;
-        trans.actions.append(&mut actions);
+        let mut entries_to_install = Vec::new();
+
+        for entry in new_entries {
+            let path = entry.check_path()?;
+            old_map.remove(path);
+
+            match old_map.get(path) {
+                Some(old_hash) if old_hash.blake3() == entry.blake3() => {
+                    continue;
+                }
+                _ => {
+                    entries_to_install.push(entry);
+                }
+            }
+        }
+
+        let mut entries_to_remove = Vec::new();
+        for old_e in old_map.into_values() {
+            entries_to_remove.push(old_e);
+        }
+
+        let mut trans = Self::install_with_entries(new, entries_to_install.clone(), &base_dir)?;
+        let remove_trans = Self::remove_with_entries(entries_to_remove, &base_dir, skip_check)?;
+
+        if !skip_check {
+            // Do not overwrite locally modified install.
+            // TODO: maybe move this code to `install_with_entries`
+            let mut allowed_install_actions = Vec::with_capacity(trans.actions.len());
+            let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
+
+            for (i, action) in trans.actions.into_iter().enumerate() {
+                let target_path = action.target_file();
+                if !target_path.is_file() {
+                    allowed_install_actions.push(action);
+                    continue;
+                }
+                let mut candidate = File::open(&target_path)
+                    .map_err(wrap_io_err!(target_path, "Opening candidate"))?;
+
+                // Ensure that the deletion candidate on disk has not been modified
+                let (_, entry_data_hash) = copy_and_hash(&mut candidate, &mut io::sink(), &mut buf)
+                    .map_err(wrap_io_err!(target_path, "Hashing file for entry"))?;
+
+                if entry_data_hash == entries_to_install[i].blake3() {
+                    allowed_install_actions.push(action);
+                } else {
+                    action.abort()?;
+                }
+            }
+            trans.actions = allowed_install_actions;
+        }
+
+        trans.actions.extend(remove_trans.actions);
+
         Ok(trans)
     }
 
-    /// Prepare transactions to remove files from a pkgar file
+    /// Prepare transactions to remove files from a pkgar file.
+    /// Does not remove files with different hash (customizable with `remove_with_entries`)
     pub fn remove<Pkg>(src: &mut Pkg, base_dir: impl AsRef<Path>) -> Result<Self, Error>
     where
         Pkg: PackageSrc<Err = Error>,
     {
         let entries = src.read_entries()?;
-        Self::remove_with_entries(entries, base_dir)
+        Self::remove_with_entries(entries, base_dir, false)
     }
 
     /// Prepare transactions to remove files from a pkgar file with filtered or modified entries
     pub fn remove_with_entries(
         entries: Vec<Entry>,
         base_dir: impl AsRef<Path>,
+        skip_check: bool,
     ) -> Result<Self, Error> {
         let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
 
@@ -270,7 +330,7 @@ impl Transaction {
             let (_, entry_data_hash) = copy_and_hash(&mut candidate, &mut io::sink(), &mut buf)
                 .map_err(wrap_io_err!(target_path.clone(), "Hashing file for entry"))?;
 
-            if entry_data_hash == entry.blake3() {
+            if skip_check || entry_data_hash == entry.blake3() {
                 actions.push(Action::Remove(target_path));
             }
         }

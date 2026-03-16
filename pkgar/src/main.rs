@@ -4,7 +4,7 @@
 use clap::{
     crate_authors, crate_description, crate_name, crate_version, App, AppSettings, Arg, SubCommand,
 };
-use pkgar::{create_with_flags, extract, list, remove, split, verify, Error};
+use pkgar::{create_with_flags, extract, list, remove, replace, split, verify, Error};
 use pkgar_keys::{DEFAULT_PUBKEY, DEFAULT_SECKEY};
 
 fn cli() -> Result<(), Error> {
@@ -39,6 +39,18 @@ fn cli() -> Result<(), Error> {
         .short("a")
         .long("archive")
         .required(true)
+        .takes_value(true)
+        .value_name("FILE");
+
+    let arg_old_pkey = Arg::with_name("old-pkey")
+        .help("Old Public key file (defaults to old pkey)")
+        .long("old-pkey")
+        .takes_value(true)
+        .value_name("FILE");
+
+    let arg_old_archive = Arg::with_name("old-archive")
+        .help("Old Archive file")
+        .long("old-archive")
         .takes_value(true)
         .value_name("FILE");
 
@@ -78,6 +90,15 @@ fn cli() -> Result<(), Error> {
                 .about("List archive")
                 .arg(&arg_pkey)
                 .arg(&arg_archive),
+        )
+        .subcommand(
+            SubCommand::with_name("replace")
+                .about("Replace old archive")
+                .arg(&arg_pkey)
+                .arg(&arg_old_pkey)
+                .arg(&arg_old_archive)
+                .arg(&arg_archive)
+                .arg(&arg_basedir),
         )
         .subcommand(
             SubCommand::with_name("remove")
@@ -124,6 +145,20 @@ fn cli() -> Result<(), Error> {
     } else if let Some(matches) = matches.subcommand_matches("extract") {
         extract(
             matches.value_of("pkey").unwrap(),
+            matches.value_of("archive").unwrap(),
+            matches.value_of("basedir").unwrap(),
+        )
+    } else if let Some(matches) = matches.subcommand_matches("replace") {
+        let Some(old_archive) = matches.value_of("old-archive") else {
+            return Err(Error::DataNotInitialized);
+        };
+        let old_pkey = matches
+            .value_of("old-pkey")
+            .unwrap_or_else(|| matches.value_of("pkey").unwrap());
+        replace(
+            old_pkey,
+            matches.value_of("pkey").unwrap(),
+            old_archive,
             matches.value_of("archive").unwrap(),
             matches.value_of("basedir").unwrap(),
         )

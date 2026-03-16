@@ -116,12 +116,8 @@ pub fn create_with_flags(
     //TODO: move functions to library
 
     let archive_path = archive_path.as_ref();
-    let mut archive_file = fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(archive_path)
-        .map_err(wrap_io_err!(archive_path, "Opening source"))?;
+    let mut archive_file =
+        fs::File::create(archive_path).map_err(wrap_io_err!(archive_path, "Opening source"))?;
 
     // Create a list of entries
     let mut entries = Vec::new();
@@ -268,6 +264,24 @@ pub fn extract(
     let mut package = PackageFile::new(archive_path, &pkey)?;
 
     Transaction::install(&mut package, base_dir)?.commit()?;
+
+    Ok(())
+}
+
+pub fn replace(
+    old_pkey_path: impl AsRef<Path>,
+    pkey_path: impl AsRef<Path>,
+    old_head_path: impl AsRef<Path>,
+    archive_path: impl AsRef<Path>,
+    base_dir: impl AsRef<Path>,
+) -> Result<(), Error> {
+    let pkey = PublicKeyFile::open(pkey_path.as_ref())?.pkey;
+    let old_pkey = PublicKeyFile::open(old_pkey_path.as_ref())?.pkey;
+
+    let mut new_package = PackageFile::new(archive_path, &pkey)?;
+    let mut old_package = PackageFile::new(old_head_path, &old_pkey)?;
+
+    Transaction::replace(&mut old_package, &mut new_package, base_dir)?.commit()?;
 
     Ok(())
 }
