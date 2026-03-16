@@ -162,8 +162,21 @@ impl Transaction {
                         .map_err(wrap_io_err!(tmp_path, "Copying entry to tempfile"))?;
 
                     let sym_target = Path::new(OsStr::from_bytes(&data));
-                    symlink(sym_target, &tmp_path)
-                        .map_err(wrap_io_err!(tmp_path, "Symlinking to tmp"))?;
+                    let mut retried = false;
+                    loop {
+                        match symlink(sym_target, &tmp_path)
+                            .map_err(wrap_io_err!(tmp_path, "Symlinking to tmp"))
+                        {
+                            Ok(_) => break,
+                            Err(e) if retried => return Err(e),
+                            Err(_) => {
+                                // necessary because symlink can't overwrite
+                                fs::remove_file(&tmp_path)
+                                    .map_err(wrap_io_err!(tmp_path, "Unlinking old symlink tmp"))?;
+                                retried = true
+                            }
+                        }
+                    }
                     actions.push(Action::Rename(tmp_path, target_path));
                     (size, hash)
                 }
