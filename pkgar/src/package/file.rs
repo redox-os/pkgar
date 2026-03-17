@@ -22,11 +22,7 @@ impl PackageFile {
         let file = OpenOptions::new()
             .read(true)
             .open(&path)
-            .map_err(|source| Error::Io {
-                source,
-                path: Some(path.clone()),
-                context: "Open",
-            })?;
+            .map_err(wrap_io_err!(path.clone(), "Opening pkgar file"))?;
 
         let mut new = PackageFile {
             path,

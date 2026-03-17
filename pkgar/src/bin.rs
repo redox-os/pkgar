@@ -116,12 +116,8 @@ pub fn create_with_flags(
     //TODO: move functions to library
 
     let archive_path = archive_path.as_ref();
-    let mut archive_file = fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(archive_path)
-        .map_err(wrap_io_err!(archive_path, "Opening source"))?;
+    let mut archive_file =
+        fs::File::create(archive_path).map_err(wrap_io_err!(archive_path, "Opening source"))?;
 
     // Create a list of entries
     let mut entries = Vec::new();
@@ -238,32 +234,21 @@ pub fn create_with_flags(
     header.signature.copy_from_slice(&signature);
 
     // Write archive header
-    archive_file
-        .seek(SeekFrom::Start(0))
-        .map_err(|source| Error::Io {
-            source,
-            path: Some(archive_path.to_path_buf()),
-            context: "Seeking archive_file back to 0",
-        })?;
+    archive_file.seek(SeekFrom::Start(0)).map_err(wrap_io_err!(
+        archive_path.to_path_buf(),
+        "Seeking archive_file back to 0"
+    ))?;
 
     archive_file
         .write_all(bytemuck::bytes_of(&header))
-        .map_err(|source| Error::Io {
-            source,
-            path: Some(archive_path.to_path_buf()),
-            context: "Writing header",
-        })?;
+        .map_err(wrap_io_err!(archive_path.to_path_buf(), "Writing header"))?;
 
     // Write each entry header
     for entry in &entries {
         let _ = entry.check_path()?;
         archive_file
             .write_all(bytemuck::bytes_of(entry))
-            .map_err(|source| Error::Io {
-                source,
-                path: Some(archive_path.to_path_buf()),
-                context: "Writing entry",
-            })?;
+            .map_err(wrap_io_err!(archive_path.to_path_buf(), "Writing entry"))?;
     }
 
     Ok(())
@@ -279,6 +264,24 @@ pub fn extract(
     let mut package = PackageFile::new(archive_path, &pkey)?;
 
     Transaction::install(&mut package, base_dir)?.commit()?;
+
+    Ok(())
+}
+
+pub fn replace(
+    old_pkey_path: impl AsRef<Path>,
+    pkey_path: impl AsRef<Path>,
+    old_head_path: impl AsRef<Path>,
+    archive_path: impl AsRef<Path>,
+    base_dir: impl AsRef<Path>,
+) -> Result<(), Error> {
+    let pkey = PublicKeyFile::open(pkey_path.as_ref())?.pkey;
+    let old_pkey = PublicKeyFile::open(old_pkey_path.as_ref())?.pkey;
+
+    let mut new_package = PackageFile::new(archive_path, &pkey)?;
+    let mut old_package = PackageFile::new(old_head_path, &old_pkey)?;
+
+    Transaction::replace(&mut old_package, &mut new_package, base_dir)?.commit()?;
 
     Ok(())
 }
