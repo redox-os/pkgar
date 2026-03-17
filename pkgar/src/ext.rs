@@ -77,7 +77,7 @@ where
 
     /// Build a reader for a given entry on this source.
     /// Must call reader.finish() before getting another reader.
-    fn data_reader(&mut self, entry: Entry) -> Result<DataReader<R>, Error> {
+    fn data_reader(&mut self, entry: &Entry) -> Result<DataReader<R>, Error> {
         let mut reader = self.take_reader()?;
         let offset = self.header().total_size()? as u64 + entry.offset;
         reader

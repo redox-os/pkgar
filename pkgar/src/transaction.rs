@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io;
@@ -7,7 +7,7 @@ use std::os::unix::fs::{symlink, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 use blake3::Hash;
-use pkgar_core::{Mode, PackageSrc};
+use pkgar_core::{Entry, Mode, PackageSrc};
 
 use crate::ext::{copy_and_hash, EntryExt, PackageSrcExt};
 use crate::{wrap_io_err, Error, READ_WRITE_HASH_BUF_SIZE};
@@ -57,11 +57,8 @@ fn temp_path(target_path: impl AsRef<Path>, entry_hash: Hash) -> Result<PathBuf,
         hash_path
     };
 
-    fs::create_dir_all(parent_dir).map_err(|source| Error::Io {
-        source,
-        path: Some(parent_dir.to_path_buf()),
-        context: "Creating dir",
-    })?;
+    fs::create_dir_all(parent_dir)
+        .map_err(wrap_io_err!(parent_dir.to_path_buf(), "Creating dir"))?;
     Ok(parent_dir.join(tmp_name))
 }
 
@@ -76,26 +73,20 @@ pub enum Action {
 impl Action {
     fn commit(&self) -> Result<(), Error> {
         match self {
-            Action::Rename(tmp, target) => fs::rename(tmp, target).map_err(|source| Error::Io {
-                source,
-                path: Some(tmp.to_path_buf()),
-                context: "Renaming file",
-            }),
-            Action::Remove(target) => fs::remove_file(target).map_err(|source| Error::Io {
-                source,
-                path: Some(target.to_path_buf()),
-                context: "Removing file",
-            }),
+            Action::Rename(tmp, target) => {
+                fs::rename(tmp, target).map_err(wrap_io_err!(tmp.to_path_buf(), "Renaming file"))
+            }
+            Action::Remove(target) => {
+                fs::remove_file(target).map_err(wrap_io_err!(target.to_path_buf(), "Removing file"))
+            }
         }
     }
 
     fn abort(&self) -> Result<(), Error> {
         match self {
-            Action::Rename(tmp, _) => fs::remove_file(tmp).map_err(|source| Error::Io {
-                source,
-                path: Some(tmp.to_path_buf()),
-                context: "Removing tempfile",
-            }),
+            Action::Rename(tmp, _) => {
+                fs::remove_file(tmp).map_err(wrap_io_err!(tmp.to_path_buf(), "Removing tempfile"))
+            }
             Action::Remove(_) => Ok(()),
         }
     }
@@ -123,17 +114,31 @@ impl Transaction {
         }
     }
 
-    /// Prepare transactions to install from a pkgar file
+    /// Prepare transactions to install from a pkgar file.
+    /// Overwrites any existing file (customizable with `install_with_entries`).
     pub fn install<Pkg>(src: &mut Pkg, base_dir: impl AsRef<Path>) -> Result<Self, Error>
+    where
+        Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
+    {
+        let entries = src.read_entries()?;
+        Self::install_with_entries(src, entries, base_dir, true)
+    }
+
+    /// Prepare transactions to install from a pkgar file with filtered or modified entries
+    pub fn install_with_entries<Pkg>(
+        src: &mut Pkg,
+        entries: Vec<Entry>,
+        base_dir: impl AsRef<Path>,
+        skip_local_check: bool,
+    ) -> Result<Self, Error>
     where
         Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
     {
         let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
 
-        let entries = src.read_entries()?;
         let mut actions = Vec::with_capacity(entries.len());
 
-        for entry in entries {
+        for entry in &entries {
             let relative_path = entry.check_path()?;
 
             let target_path = base_dir.as_ref().join(relative_path);
@@ -146,7 +151,7 @@ impl Transaction {
             let tmp_path = temp_path(&target_path, entry.blake3())?;
 
             let mode = entry.mode().map_err(Error::from)?;
-            let mut data_reader = src.data_reader(entry)?;
+            let mut data_reader = src.data_reader(&entry)?;
 
             let (entry_data_size, entry_data_hash) = match mode.kind() {
                 Mode::FILE => {
@@ -171,8 +176,21 @@ impl Transaction {
                         .map_err(wrap_io_err!(tmp_path, "Copying entry to tempfile"))?;
 
                     let sym_target = Path::new(OsStr::from_bytes(&data));
-                    symlink(sym_target, &tmp_path)
-                        .map_err(wrap_io_err!(tmp_path, "Symlinking to tmp"))?;
+                    let mut retried = false;
+                    loop {
+                        match symlink(sym_target, &tmp_path)
+                            .map_err(wrap_io_err!(tmp_path, "Symlinking to tmp"))
+                        {
+                            Ok(_) => break,
+                            Err(e) if retried => return Err(e),
+                            Err(_) => {
+                                // necessary because symlink can't overwrite
+                                fs::remove_file(&tmp_path)
+                                    .map_err(wrap_io_err!(tmp_path, "Unlinking old symlink tmp"))?;
+                                retried = true
+                            }
+                        }
+                    }
                     actions.push(Action::Rename(tmp_path, target_path));
                     (size, hash)
                 }
@@ -184,10 +202,40 @@ impl Transaction {
             entry.verify(entry_data_hash, entry_data_size, &data_reader)?;
             data_reader.finish(src)?;
         }
+
+        if !skip_local_check {
+            // Do not overwrite locally modified install.
+            let mut allowed_install_actions = Vec::with_capacity(actions.len());
+            let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
+
+            for (i, action) in actions.into_iter().enumerate() {
+                let target_path = action.target_file();
+                if !target_path.is_file() {
+                    allowed_install_actions.push(action);
+                    continue;
+                }
+                let mut candidate = File::open(&target_path)
+                    .map_err(wrap_io_err!(target_path, "Opening candidate"))?;
+
+                // Ensure that the deletion candidate on disk has not been modified
+                let (_, entry_data_hash) = copy_and_hash(&mut candidate, &mut io::sink(), &mut buf)
+                    .map_err(wrap_io_err!(target_path, "Hashing file for entry"))?;
+
+                if entry_data_hash == entries[i].blake3() {
+                    allowed_install_actions.push(action);
+                } else {
+                    action.abort()?;
+                }
+            }
+            actions = allowed_install_actions;
+        }
+
         Ok(Transaction::new(actions))
     }
 
-    /// Prepare transactions to replace old files from a pkgar file
+    /// Prepare transactions to replace old files from a pkgar file.
+    /// Does not overwrite existing file if the file is not updated between two package.
+    /// Does not replace or remove existing file if the file is changed locally (customizable with `replace_with_entries`).
     pub fn replace<Pkg>(
         old: &mut Pkg,
         new: &mut Pkg,
@@ -198,35 +246,78 @@ impl Transaction {
     {
         let old_entries = old.read_entries()?;
         let new_entries = new.read_entries()?;
+        Self::replace_with_entries(old_entries, new_entries, new, base_dir, false)
+    }
 
-        // All the files that are present in old but not in new
-        let mut actions = old_entries
-            .iter()
-            .filter(|old_e| {
-                !new_entries
-                    .iter()
-                    .any(|new_e| new_e.blake3() == old_e.blake3())
-            })
-            .map(|e| {
-                let target_path = base_dir.as_ref().join(e.check_path()?);
-                Ok(Action::Remove(target_path))
-            })
-            .collect::<Result<Vec<Action>, Error>>()?;
+    /// Prepare transactions to replace old files from a pkgar file with filtered or modified entries
+    pub fn replace_with_entries<Pkg>(
+        old_entries: Vec<Entry>,
+        new_entries: Vec<Entry>,
+        new: &mut Pkg,
+        base_dir: impl AsRef<Path>,
+        skip_local_check: bool,
+    ) -> Result<Transaction, Error>
+    where
+        Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
+    {
+        let mut old_map = HashMap::with_capacity(old_entries.len());
+        for entry in old_entries {
+            old_map.insert(entry.check_path()?.to_path_buf(), entry);
+        }
 
-        //TODO: Don't force a re-read of all the entries for the new package
-        let mut trans = Transaction::install(new, base_dir)?;
-        trans.actions.append(&mut actions);
+        let mut entries_to_install = Vec::new();
+
+        for entry in new_entries {
+            let path = entry.check_path()?;
+            old_map.remove(path);
+
+            match old_map.get(path) {
+                Some(old_hash) if old_hash.blake3() == entry.blake3() => {
+                    continue;
+                }
+                _ => {
+                    entries_to_install.push(entry);
+                }
+            }
+        }
+
+        let mut entries_to_remove = Vec::new();
+        for old_e in old_map.into_values() {
+            entries_to_remove.push(old_e);
+        }
+
+        let mut trans = Self::install_with_entries(
+            new,
+            entries_to_install.clone(),
+            &base_dir,
+            skip_local_check,
+        )?;
+        let remove_trans =
+            Self::remove_with_entries(entries_to_remove, &base_dir, skip_local_check)?;
+
+        trans.actions.extend(remove_trans.actions);
+
         Ok(trans)
     }
 
-    /// Prepare transactions to remove files from a pkgar file
-    pub fn remove<Pkg>(pkg: &mut Pkg, base_dir: impl AsRef<Path>) -> Result<Transaction, Error>
+    /// Prepare transactions to remove files from a pkgar file.
+    /// Does not remove files with different hash (customizable with `remove_with_entries`)
+    pub fn remove<Pkg>(src: &mut Pkg, base_dir: impl AsRef<Path>) -> Result<Self, Error>
     where
         Pkg: PackageSrc<Err = Error>,
     {
+        let entries = src.read_entries()?;
+        Self::remove_with_entries(entries, base_dir, false)
+    }
+
+    /// Prepare transactions to remove files from a pkgar file with filtered or modified entries
+    pub fn remove_with_entries(
+        entries: Vec<Entry>,
+        base_dir: impl AsRef<Path>,
+        skip_local_check: bool,
+    ) -> Result<Self, Error> {
         let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
 
-        let entries = pkg.read_entries()?;
         let mut actions = Vec::with_capacity(entries.len());
 
         for entry in entries {
@@ -239,22 +330,16 @@ impl Transaction {
                 "target path was not in the base path"
             );
 
-            let mut candidate = File::open(&target_path).map_err(|source| Error::Io {
-                source,
-                path: Some(target_path.clone()),
-                context: "Opening candidate",
-            })?;
+            let mut candidate = File::open(&target_path)
+                .map_err(wrap_io_err!(target_path.clone(), "Opening candidate"))?;
 
             // Ensure that the deletion candidate on disk has not been modified
-            copy_and_hash(&mut candidate, &mut io::sink(), &mut buf).map_err(|source| {
-                Error::Io {
-                    source,
-                    path: Some(target_path.clone()),
-                    context: "Hashing file for entry",
-                }
-            })?;
+            let (_, entry_data_hash) = copy_and_hash(&mut candidate, &mut io::sink(), &mut buf)
+                .map_err(wrap_io_err!(target_path.clone(), "Hashing file for entry"))?;
 
-            actions.push(Action::Remove(target_path));
+            if skip_local_check || entry_data_hash == entry.blake3() {
+                actions.push(Action::Remove(target_path));
+            }
         }
         Ok(Transaction::new(actions))
     }

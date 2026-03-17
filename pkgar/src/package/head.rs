@@ -6,8 +6,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::ext::EntryExt;
 use crate::Error;
+use crate::{ext::EntryExt, wrap_io_err};
 
 #[derive(Debug)]
 pub struct PackageHead {
@@ -30,11 +30,7 @@ impl PackageHead {
         let file = OpenOptions::new()
             .read(true)
             .open(&head_path)
-            .map_err(|source| Error::Io {
-                source,
-                path: Some(head_path.clone()),
-                context: "Open",
-            })?;
+            .map_err(wrap_io_err!(head_path.clone(), "Open head"))?;
 
         let mut new = PackageHead {
             head_path,
@@ -61,18 +57,10 @@ impl PackageSrc for PackageHead {
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Err> {
         self.src
             .seek(SeekFrom::Start(offset))
-            .map_err(|source| Error::Io {
-                source,
-                path: None,
-                context: "Seek",
-            })?;
+            .map_err(wrap_io_err!("Seek head"))?;
         self.src
             .read_exact(buf)
-            .map_err(|source| Error::Io {
-                source,
-                path: None,
-                context: "Read",
-            })
+            .map_err(wrap_io_err!("Read head"))
             .map(|()| buf.len())
     }
 
@@ -94,26 +82,14 @@ impl PackageSrc for PackageHead {
         let mut entry_file = OpenOptions::new()
             .read(true)
             .open(&entry_path)
-            .map_err(|source| Error::Io {
-                source,
-                path: Some(entry_path.clone()),
-                context: "Open",
-            })?;
+            .map_err(wrap_io_err!(entry_path.clone(), "Open entry"))?;
 
         entry_file
             .seek(SeekFrom::Start(offset as u64))
-            .map_err(|source| Error::Io {
-                source,
-                path: Some(entry_path.clone()),
-                context: "Seek",
-            })?;
+            .map_err(wrap_io_err!(entry_path.clone(), "Seek entry"))?;
 
         entry_file
             .read(&mut buf[..end])
-            .map_err(|source| Error::Io {
-                source,
-                path: Some(entry_path),
-                context: "Read",
-            })
+            .map_err(wrap_io_err!(entry_path.clone(), "Read entry"))
     }
 }

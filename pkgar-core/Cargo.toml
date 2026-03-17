@@ -11,4 +11,4 @@ edition = "2021"
 bitflags = "2"
 blake3 = { version = "1.8", default-features = false, features = ["rayon"] }
 bytemuck = { version = "1", features = ["derive", "extern_crate_std"] }
-dryoc = "0.6"
+dryoc = "0.7"
