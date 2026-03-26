@@ -15,6 +15,7 @@ use crate::package::PackageFile;
 use crate::transaction::Transaction;
 use crate::{wrap_io_err, Error};
 
+/// Iterate a directory and return its entries
 pub fn folder_entries<P>(base: P) -> Result<Vec<Entry>, Error>
 where
     P: AsRef<Path>,
@@ -67,6 +68,7 @@ where
     Ok(())
 }
 
+/// Create a new pkgar file with given secret and source path
 pub fn create(
     secret_path: impl AsRef<Path>,
     archive_path: impl AsRef<Path>,
@@ -83,6 +85,7 @@ pub fn create(
     )
 }
 
+/// Create a new pkgar file with given secret and source path and header flags
 pub fn create_with_flags(
     secret_path: impl AsRef<Path>,
     archive_path: impl AsRef<Path>,
@@ -109,6 +112,7 @@ pub fn create_with_flags(
     )
 }
 
+/// Create a new pkgar file with extracted secret keys from `pkgar_keys::get_skey` and entries from `folder_entries`
 fn create_with_entries(
     secret_key: SecretKey,
     public_key: PublicKey,
@@ -253,6 +257,7 @@ fn create_with_entries(
     Ok(())
 }
 
+/// Extract a pkgar file to a directory
 pub fn extract(
     pkey_path: impl AsRef<Path>,
     archive_path: impl AsRef<Path>,
@@ -267,6 +272,7 @@ pub fn extract(
     Ok(())
 }
 
+/// Update a directory from a pkgar file
 pub fn replace(
     old_pkey_path: impl AsRef<Path>,
     pkey_path: impl AsRef<Path>,
@@ -285,6 +291,7 @@ pub fn replace(
     Ok(())
 }
 
+/// Remove directory entries from a pkgar file
 pub fn remove(
     pkey_path: impl AsRef<Path>,
     archive_path: impl AsRef<Path>,
@@ -299,6 +306,7 @@ pub fn remove(
     Ok(())
 }
 
+/// Print a pkgar file entries path
 pub fn list(pkey_path: impl AsRef<Path>, archive_path: impl AsRef<Path>) -> Result<(), Error> {
     let pkey = PublicKeyFile::open(pkey_path.as_ref())?.pkey;
 
@@ -311,6 +319,7 @@ pub fn list(pkey_path: impl AsRef<Path>, archive_path: impl AsRef<Path>) -> Resu
     Ok(())
 }
 
+/// Split a package file into head and optional data
 pub fn split(
     pkey_path: impl AsRef<Path>,
     archive_path: impl AsRef<Path>,
@@ -319,21 +328,19 @@ pub fn split(
 ) -> Result<(), Error> {
     let pkey_path = pkey_path.as_ref();
     let archive_path = archive_path.as_ref();
-    let head_path = head_path.as_ref();
-    let data_path_opt = data_path_opt.as_ref();
 
     let pkey = PublicKeyFile::open(pkey_path)?.pkey;
     let mut package = PackageFile::new(archive_path, &pkey)?;
-    package.split(head_path, data_path_opt.map(|p| p.as_ref()))
+    package.split(head_path, data_path_opt)
 }
 
+/// Split a package file into head and optional data
 pub fn verify(
     pkey_path: impl AsRef<Path>,
     archive_path: impl AsRef<Path>,
     base_dir: impl AsRef<Path>,
 ) -> Result<(), Error> {
     let pkey = PublicKeyFile::open(pkey_path)?.pkey;
-
     let mut package = PackageFile::new(&archive_path, &pkey)?;
-    package.verify(base_dir.as_ref())
+    package.verify(base_dir)
 }

@@ -37,11 +37,17 @@ impl PackageFile {
         Ok(new)
     }
 
-    pub fn split(&mut self, head_path: &Path, data_path_opt: Option<&Path>) -> Result<(), Error> {
+    pub fn split(
+        &mut self,
+        head_path: impl AsRef<Path>,
+        data_path_opt: Option<impl AsRef<Path>>,
+    ) -> Result<(), Error> {
+        let head_path = head_path.as_ref();
         let data_offset = self.header().total_size()? as u64;
         let mut src = self.take_reader()?;
 
         if let Some(data_path) = data_path_opt {
+            let data_path = data_path.as_ref();
             let mut data_file =
                 fs::File::create(data_path).map_err(wrap_io_err!(data_path, "Opening data"))?;
             src.seek(SeekFrom::Start(data_offset))
@@ -63,7 +69,8 @@ impl PackageFile {
         Ok(())
     }
 
-    pub fn verify(&mut self, base_dir: &Path) -> Result<(), Error> {
+    pub fn verify(&mut self, base_dir: impl AsRef<Path>) -> Result<(), Error> {
+        let base_dir = base_dir.as_ref();
         let entries = self.read_entries()?;
         let mut pkg_file = self.take_reader()?;
         let header = self.header();
