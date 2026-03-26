@@ -949,7 +949,6 @@ dependencies = [
  "clap",
  "dirs",
  "hex",
- "lazy_static",
  "pkgar-core",
  "seckey",
  "serde",

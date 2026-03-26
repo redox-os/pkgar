@@ -6,7 +6,7 @@ use std::ops::Deref;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 #[cfg(feature = "cli")]
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::LazyLock};
 
 use hex::FromHex;
 use pkgar_core::{
@@ -31,28 +31,23 @@ type Salt = [u8; 32];
 pub use error::Error;
 
 #[cfg(feature = "cli")]
-lazy_static::lazy_static! {
-    static ref HOMEDIR: PathBuf = {
-         dirs::home_dir()
-            .unwrap_or("./".into())
-    };
+static HOMEDIR: LazyLock<PathBuf> = LazyLock::new(|| dirs::home_dir().unwrap_or("./".into()));
 
-    /// The default location for pkgar to look for the user's public key.
-    ///
-    /// Defaults to `$HOME/.pkgar/keys/id_ed25519.pub.toml`. If `$HOME` is
-    /// unset, `./.pkgar/keys/id_ed25519.pub.toml`.
-    pub static ref DEFAULT_PUBKEY: PathBuf = {
-        Path::join(&HOMEDIR, ".pkgar/keys/id_ed25519.pub.toml")
-    };
+/// The default location for pkgar to look for the user's public key.
+///
+/// Defaults to `$HOME/.pkgar/keys/id_ed25519.pub.toml`. If `$HOME` is
+/// unset, `./.pkgar/keys/id_ed25519.pub.toml`.
+#[cfg(feature = "cli")]
+pub static DEFAULT_PUBKEY: LazyLock<PathBuf> =
+    LazyLock::new(|| Path::join(&HOMEDIR, ".pkgar/keys/id_ed25519.pub.toml"));
 
-    /// The default location for pkgar to look for the user's secret key.
-    ///
-    /// Defaults to `$HOME/.pkgar/keys/id_ed25519.toml`. If `$HOME` is unset,
-    /// `./.pkgar/keys/id_ed25519.toml`.
-    pub static ref DEFAULT_SECKEY: PathBuf = {
-        Path::join(&HOMEDIR, ".pkgar/keys/id_ed25519.toml")
-    };
-}
+/// The default location for pkgar to look for the user's secret key.
+///
+/// Defaults to `$HOME/.pkgar/keys/id_ed25519.toml`. If `$HOME` is unset,
+/// `./.pkgar/keys/id_ed25519.toml`.
+#[cfg(feature = "cli")]
+pub static DEFAULT_SECKEY: LazyLock<PathBuf> =
+    LazyLock::new(|| Path::join(&HOMEDIR, ".pkgar/keys/id_ed25519.toml"));
 
 mod ser {
     use hex::FromHex;
@@ -301,7 +296,10 @@ impl SecretKeyFile {
         let mut seed = [0; 32];
         seed.copy_from_slice(&skey[..32]);
         let (pkey, new_skey) = crypto_sign_seed_keypair(&seed);
-        assert_eq!(skey, new_skey);
+        if skey != new_skey {
+            // actually requires passphrase, but the user isn't provide one
+            return None;
+        }
         Some(pkey)
     }
 
