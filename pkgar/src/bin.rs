@@ -1,13 +1,13 @@
 use std::fs;
-use std::io::{self, Seek, SeekFrom, Write};
+use std::io::{Seek, SeekFrom, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-use pkgar_core::HeaderFlags;
 use pkgar_core::{
     dryoc::classic::crypto_sign::crypto_sign_detached, Entry, Header, Mode, PackageSrc,
 };
+use pkgar_core::{HeaderFlags, PublicKey, SecretKey};
 use pkgar_keys::PublicKeyFile;
 
 use crate::ext::{copy_and_hash, DataWriter, EntryExt};
@@ -15,7 +15,16 @@ use crate::package::PackageFile;
 use crate::transaction::Transaction;
 use crate::{wrap_io_err, Error};
 
-fn folder_entries<P, Q>(base: P, path: Q, entries: &mut Vec<Entry>) -> io::Result<()>
+pub fn folder_entries<P>(base: P) -> Result<Vec<Entry>, Error>
+where
+    P: AsRef<Path>,
+{
+    let mut entries = Vec::new();
+    folder_entries_inner(&base, &base, &mut entries)?;
+    Ok(entries)
+}
+
+fn folder_entries_inner<P, Q>(base: P, path: Q, entries: &mut Vec<Entry>) -> Result<(), Error>
 where
     P: AsRef<Path>,
     Q: AsRef<Path>,
@@ -25,58 +34,33 @@ where
 
     // Sort each folder's entries by the file name
     let mut read_dir = Vec::new();
-    for entry_res in fs::read_dir(path)? {
-        read_dir.push(entry_res?);
+    for entry_res in fs::read_dir(path).map_err(wrap_io_err!(path, "Reading entries"))? {
+        let Ok(entry) = entry_res else {
+            continue;
+        };
+        read_dir.push(entry);
     }
+
     read_dir.sort_by_key(|path| path.file_name());
 
     for entry in read_dir {
-        let metadata = entry.metadata()?;
         let entry_path = entry.path();
-        if metadata.is_dir() {
-            folder_entries(base, entry_path, entries)?;
+        let metadata = entry
+            .metadata()
+            .map_err(wrap_io_err!(entry_path, "Getting entry metadata"))?;
+        let entry_type = metadata.file_type();
+        if entry_type.is_dir() {
+            folder_entries_inner(base, entry_path, entries)?;
         } else {
-            let relative = entry_path
-                .strip_prefix(base)
-                .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
-
-            let mut path_bytes = [0; 256];
-            let relative_bytes = relative.as_os_str().as_bytes();
-            if relative_bytes.len() >= path_bytes.len() {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!(
-                        "relative path longer than supported: {} > {}",
-                        relative_bytes.len(),
-                        path_bytes.len()
-                    ),
-                ));
-            }
-            path_bytes[..relative_bytes.len()].copy_from_slice(relative_bytes);
-
-            let file_type = metadata.file_type();
-            let file_mode = metadata.permissions().mode();
-
-            //TODO: Use pkgar_core::Mode for all ops. This is waiting on error
-            // handling.
-            let mut mode = file_mode & Mode::PERM.bits();
-            if file_type.is_file() {
-                mode |= Mode::FILE.bits();
-            } else if file_type.is_symlink() {
-                mode |= Mode::SYMLINK.bits();
-            } else {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("Unsupported entry at {:?}: {:?}", relative, metadata),
-                ));
-            }
-            entries.push(Entry {
-                blake3: [0; 32],
-                offset: 0,
-                size: metadata.len(),
-                mode,
-                path: path_bytes,
-            });
+            let Ok(relative) = entry_path.strip_prefix(base) else {
+                continue;
+            };
+            let mode = Mode::new_file(
+                metadata.permissions().mode(),
+                entry_type.is_file(),
+                entry_type.is_symlink(),
+            )?;
+            entries.push(Entry::new_uninit(relative.as_os_str().as_bytes(), mode)?);
         }
     }
 
@@ -86,12 +70,12 @@ where
 pub fn create(
     secret_path: impl AsRef<Path>,
     archive_path: impl AsRef<Path>,
-    folder: impl AsRef<Path>,
+    source_path: impl AsRef<Path>,
 ) -> Result<(), Error> {
     create_with_flags(
         secret_path,
         archive_path,
-        folder,
+        source_path,
         HeaderFlags::latest(
             pkgar_core::Architecture::Independent,
             pkgar_core::Packaging::Uncompressed,
@@ -102,28 +86,41 @@ pub fn create(
 pub fn create_with_flags(
     secret_path: impl AsRef<Path>,
     archive_path: impl AsRef<Path>,
-    folder: impl AsRef<Path>,
+    source_path: impl AsRef<Path>,
     flags: HeaderFlags,
 ) -> Result<(), Error> {
     let keyfile = pkgar_keys::get_skey(secret_path.as_ref())?;
-    let secret_key = keyfile
-        .secret_key()
-        .unwrap_or_else(|| panic!("{} was encrypted?", secret_path.as_ref().display()));
-    let public_key = keyfile
-        .public_key()
-        .unwrap_or_else(|| panic!("{} was encrypted?", secret_path.as_ref().display()));
+    let Some(secret_key) = keyfile.secret_key() else {
+        return Err(Error::DataNotInitialized);
+    };
+    let Some(public_key) = keyfile.public_key() else {
+        return Err(Error::DataNotInitialized);
+    };
 
-    //TODO: move functions to library
+    let entries = folder_entries(&source_path)?;
 
+    create_with_entries(
+        secret_key,
+        public_key,
+        archive_path,
+        flags,
+        entries,
+        source_path,
+    )
+}
+
+fn create_with_entries(
+    secret_key: SecretKey,
+    public_key: PublicKey,
+    archive_path: impl AsRef<Path>,
+    flags: HeaderFlags,
+    mut entries: Vec<Entry>,
+    source_path: impl AsRef<Path>,
+) -> Result<(), Error> {
     let archive_path = archive_path.as_ref();
+    let source_path = source_path.as_ref();
     let mut archive_file =
         fs::File::create(archive_path).map_err(wrap_io_err!(archive_path, "Opening source"))?;
-
-    // Create a list of entries
-    let mut entries = Vec::new();
-    let folder = folder.as_ref();
-    folder_entries(folder, folder, &mut entries)
-        .map_err(wrap_io_err!(archive_path, "Recursing buildroot"))?;
 
     // Create initial header
     let mut header = Header {
@@ -147,7 +144,7 @@ pub fn create_with_flags(
     let mut data_offset: u64 = 0;
     for entry in &mut entries {
         let relative = entry.check_path()?;
-        let path = folder.join(relative);
+        let path = source_path.join(relative);
 
         let mode = entry.mode().map_err(Error::from)?;
 
@@ -208,9 +205,7 @@ pub fn create_with_flags(
             });
         }
 
-        entry.size = clen;
-        entry.offset = data_offset;
-        entry.blake3.copy_from_slice(hash.as_bytes());
+        entry.init(hash.into(), data_offset, clen);
         data_offset = data_offset
             .checked_add(clen)
             .ok_or(pkgar_core::Error::Overflow)
@@ -250,6 +245,10 @@ pub fn create_with_flags(
             .write_all(bytemuck::bytes_of(entry))
             .map_err(wrap_io_err!(archive_path.to_path_buf(), "Writing entry"))?;
     }
+
+    archive_file
+        .flush()
+        .map_err(wrap_io_err!("Flushing archive"))?;
 
     Ok(())
 }

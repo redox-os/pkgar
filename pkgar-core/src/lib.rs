@@ -39,6 +39,28 @@ bitflags! {
 }
 
 impl Mode {
+    /// Get a new Mode. PERM and KIND must be not zero.
+    pub fn new(perm: u32, kind: u32) -> Result<Self, Error> {
+        let perm = Mode::from_bits_retain(perm & Self::PERM.bits());
+        let kind = Mode::from_bits_retain(kind & Self::KIND.bits());
+        if kind.is_empty() || perm.is_empty() {
+            return Err(Error::InvalidMode(kind.bits() | perm.bits()));
+        }
+        Ok(kind | perm)
+    }
+
+    /// Get a new Mode. Guaranteed to have FILE bit set. PERM must not be zero.
+    pub fn new_file(perm: u32, is_file: bool, is_symlink: bool) -> Result<Self, Error> {
+        let kind = if is_symlink {
+            Self::SYMLINK.bits()
+        } else if is_file {
+            Self::FILE.bits()
+        } else {
+            0
+        };
+        Self::new(perm, kind)
+    }
+
     /// Only any kind bits
     pub fn kind(self) -> Mode {
         self & Mode::KIND
