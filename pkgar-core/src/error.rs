@@ -1,5 +1,5 @@
 use alloc::format;
-use alloc::string::ToString;
+use alloc::string::{String, ToString};
 use core::error;
 use core::fmt::{Display, Formatter, Result};
 
@@ -13,6 +13,7 @@ pub enum Error {
     InvalidMode(u32),
     NotSupported,
     Overflow,
+    OverflowPath([u8; 256]),
     TryFromInt(core::num::TryFromIntError),
 }
 
@@ -29,6 +30,9 @@ impl Display for Error {
             Cast(err) => format!("Bytemuck: {}", err),
             NotSupported => "Data Not Supported".to_string(),
             Overflow => "Overflow".to_string(),
+            OverflowPath(bytes) => {
+                format!("Path is Too Long: {:?}", String::from_utf8_lossy(bytes))
+            }
             TryFromInt(err) => format!("TryFromInt: {}", err),
         };
         write!(f, "{}", msg)

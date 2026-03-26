@@ -37,6 +37,29 @@ impl Display for Entry {
 }
 
 impl Entry {
+    pub fn new_uninit(path: &[u8], mode: Mode) -> Result<Self, Error> {
+        let mut path_bytes = [0; 256];
+        let len = core::cmp::min(path_bytes.len() - 1, path.len());
+        path_bytes[..len].copy_from_slice(&path[..len]);
+        if len != path.len() {
+            return Err(Error::OverflowPath(path_bytes));
+        }
+
+        Ok(Self {
+            blake3: [0; 32],
+            offset: 0,
+            size: 0,
+            mode: mode.bits(),
+            path: path_bytes,
+        })
+    }
+
+    pub fn init(&mut self, blake3: [u8; 32], offset: u64, size: u64) {
+        self.blake3 = blake3;
+        self.offset = offset;
+        self.size = size;
+    }
+
     pub fn blake3(&self) -> Hash {
         Hash::from(self.blake3)
     }
