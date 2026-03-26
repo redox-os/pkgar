@@ -919,7 +919,7 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "pkgar"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "blake3",
  "bytemuck",
@@ -934,7 +934,7 @@ dependencies = [
 
 [[package]]
 name = "pkgar-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "bitflags 2.9.4",
  "blake3",
@@ -944,7 +944,7 @@ dependencies = [
 
 [[package]]
 name = "pkgar-keys"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "clap",
  "dirs",
@@ -959,7 +959,7 @@ dependencies = [
 
 [[package]]
 name = "pkgar-repo"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "pkgar",
  "pkgar-core",
