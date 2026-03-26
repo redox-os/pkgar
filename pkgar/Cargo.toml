@@ -33,5 +33,6 @@ tempfile = "3.1.0"
 
 [features]
 default = ["std"]
-cli = ["clap", "std"]
+cli = ["clap", "std", "pkgar-keys/cli"]
+# TODO: not used, remove
 std = []
