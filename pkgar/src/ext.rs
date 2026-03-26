@@ -153,7 +153,10 @@ impl<R: Read + Seek> DataReader<R> {
     }
 
     pub fn new_with_seek(header: &Header, mut pkg_file: R, entry: &Entry) -> std::io::Result<Self> {
-        let head_size = header.total_size().unwrap() as u64;
+        let head_size = header
+            .total_size()
+            .map_err(|_| io::Error::from(io::ErrorKind::FileTooLarge))?
+            as u64;
         pkg_file.seek(io::SeekFrom::Start(head_size + entry.offset))?;
         Self::new(&header, pkg_file, entry.size)
     }

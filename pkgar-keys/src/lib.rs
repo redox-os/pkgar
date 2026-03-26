@@ -1,13 +1,14 @@
 mod error;
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, stdin, stdout, Write};
+use std::io::Write;
 use std::ops::Deref;
 use std::os::unix::fs::OpenOptionsExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(feature = "cli")]
+use std::{path::PathBuf, sync::LazyLock};
 
 use hex::FromHex;
-use lazy_static::lazy_static;
 use pkgar_core::{
     dryoc::{
         classic::{
@@ -22,34 +23,31 @@ use pkgar_core::{
 };
 use seckey::SecBytes;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "cli")]
 use termion::input::TermRead;
 
 type Salt = [u8; 32];
 
-pub use crate::error::Error;
+pub use error::Error;
 
-lazy_static! {
-    static ref HOMEDIR: PathBuf = {
-         dirs::home_dir()
-            .unwrap_or("./".into())
-    };
+#[cfg(feature = "cli")]
+static HOMEDIR: LazyLock<PathBuf> = LazyLock::new(|| dirs::home_dir().unwrap_or("./".into()));
 
-    /// The default location for pkgar to look for the user's public key.
-    ///
-    /// Defaults to `$HOME/.pkgar/keys/id_ed25519.pub.toml`. If `$HOME` is
-    /// unset, `./.pkgar/keys/id_ed25519.pub.toml`.
-    pub static ref DEFAULT_PUBKEY: PathBuf = {
-        Path::join(&HOMEDIR, ".pkgar/keys/id_ed25519.pub.toml")
-    };
+/// The default location for pkgar to look for the user's public key.
+///
+/// Defaults to `$HOME/.pkgar/keys/id_ed25519.pub.toml`. If `$HOME` is
+/// unset, `./.pkgar/keys/id_ed25519.pub.toml`.
+#[cfg(feature = "cli")]
+pub static DEFAULT_PUBKEY: LazyLock<PathBuf> =
+    LazyLock::new(|| Path::join(&HOMEDIR, ".pkgar/keys/id_ed25519.pub.toml"));
 
-    /// The default location for pkgar to look for the user's secret key.
-    ///
-    /// Defaults to `$HOME/.pkgar/keys/id_ed25519.toml`. If `$HOME` is unset,
-    /// `./.pkgar/keys/id_ed25519.toml`.
-    pub static ref DEFAULT_SECKEY: PathBuf = {
-        Path::join(&HOMEDIR, ".pkgar/keys/id_ed25519.toml")
-    };
-}
+/// The default location for pkgar to look for the user's secret key.
+///
+/// Defaults to `$HOME/.pkgar/keys/id_ed25519.toml`. If `$HOME` is unset,
+/// `./.pkgar/keys/id_ed25519.toml`.
+#[cfg(feature = "cli")]
+pub static DEFAULT_SECKEY: LazyLock<PathBuf> =
+    LazyLock::new(|| Path::join(&HOMEDIR, ".pkgar/keys/id_ed25519.toml"));
 
 mod ser {
     use hex::FromHex;
@@ -298,7 +296,10 @@ impl SecretKeyFile {
         let mut seed = [0; 32];
         seed.copy_from_slice(&skey[..32]);
         let (pkey, new_skey) = crypto_sign_seed_keypair(&seed);
-        assert_eq!(skey, new_skey);
+        if skey != new_skey {
+            // actually requires passphrase, but the user isn't provide one
+            return None;
+        }
         Some(pkey)
     }
 
@@ -328,7 +329,10 @@ impl Passwd {
     }
 
     /// Prompt the user for a `Passwd` on stdin.
+    #[cfg(feature = "cli")]
     pub fn prompt(prompt: impl AsRef<str>) -> Result<Passwd, Error> {
+        use std::io::{stdin, stdout};
+
         let stdout = stdout();
         let mut stdout = stdout.lock();
         let stdin = stdin();
@@ -354,7 +358,7 @@ impl Passwd {
         })?
         else {
             return Err(Error::Io {
-                source: std::io::Error::from(io::ErrorKind::UnexpectedEof),
+                source: std::io::Error::from(std::io::ErrorKind::UnexpectedEof),
                 path: None,
                 context: "Invalid Password Input",
             });
@@ -367,6 +371,7 @@ impl Passwd {
 
     /// Prompt for a password on stdin and confirm it. For configurable
     /// prompts, use [`Passwd::prompt`](struct.Passwd.html#method.prompt).
+    #[cfg(feature = "cli")]
     pub fn prompt_new() -> Result<Passwd, Error> {
         let passwd = Passwd::prompt(
             "Please enter a new passphrase (leave empty to store the key in plaintext): ",
@@ -380,7 +385,7 @@ impl Passwd {
     }
 
     /// Get a key for symmetric key encryption from a password.
-    fn gen_key(&self, salt: Salt) -> Option<Key> {
+    pub(crate) fn gen_key(&self, salt: Salt) -> Option<Key> {
         if self.bytes.read().len() > 0 {
             let mut key = [0; 32];
             crypto_pwhash(
@@ -410,6 +415,7 @@ impl Eq for Passwd {}
 /// will be prompted on stdin for a password, empty passwords will cause the
 /// secret key to be stored in plain text. Note that parent
 /// directories will not be created.
+#[cfg(feature = "cli")]
 pub fn gen_keypair(
     pkey_path: &Path,
     skey_path: &Path,
@@ -431,9 +437,14 @@ pub fn gen_keypair(
     Ok((pkey_file, skey_file))
 }
 
-fn prompt_skey(skey_path: &Path, prompt: impl AsRef<str>) -> Result<SecretKeyFile, Error> {
+fn prompt_skey(
+    skey_path: &Path,
+    #[cfg(feature = "cli")] prompt: impl AsRef<str>,
+) -> Result<SecretKeyFile, Error> {
+    #[allow(unused_mut)]
     let mut key_file = SecretKeyFile::open(skey_path)?;
 
+    #[cfg(feature = "cli")]
     if key_file.is_encrypted() {
         let passwd = Passwd::prompt(format!("{} {}: ", prompt.as_ref(), skey_path.display()))?;
         key_file.decrypt(passwd)?;
@@ -441,13 +452,19 @@ fn prompt_skey(skey_path: &Path, prompt: impl AsRef<str>) -> Result<SecretKeyFil
     Ok(key_file)
 }
 
-/// Get a SecretKeyFile from a path. If the file is encrypted, prompt for a password on stdin.
+/// Get a SecretKeyFile from a path. If the file is encrypted and "cli" feature enabled, prompt for a password on stdin.
+/// Without "cli" feature the secret file will remain encypted as equivalent to calling `SecretKeyFile::open`.
 pub fn get_skey(skey_path: &Path) -> Result<SecretKeyFile, Error> {
-    prompt_skey(skey_path, "Passphrase for")
+    prompt_skey(
+        skey_path,
+        #[cfg(feature = "cli")]
+        "Passphrase for",
+    )
 }
 
 /// Open, decrypt, re-encrypt with a different passphrase from stdin, and save the newly encrypted
 /// secret key at `skey_path`.
+#[cfg(feature = "cli")]
 pub fn re_encrypt(skey_path: &Path) -> Result<(), Error> {
     let mut skey_file = prompt_skey(skey_path, "Old passphrase for")?;
 

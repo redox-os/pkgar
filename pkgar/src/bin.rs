@@ -94,10 +94,10 @@ pub fn create_with_flags(
 ) -> Result<(), Error> {
     let keyfile = pkgar_keys::get_skey(secret_path.as_ref())?;
     let Some(secret_key) = keyfile.secret_key() else {
-        return Err(Error::DataNotInitialized);
+        return Err(Error::Keys(pkgar_keys::Error::PassphraseRequired));
     };
     let Some(public_key) = keyfile.public_key() else {
-        return Err(Error::DataNotInitialized);
+        return Err(Error::Keys(pkgar_keys::Error::PassphraseRequired));
     };
 
     let entries = folder_entries(&source_path)?;

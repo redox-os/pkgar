@@ -14,16 +14,15 @@ required-features = ["cli"]
 
 [dependencies]
 clap = { version = "2", optional = true }
-dirs = "6"
+dirs = { version = "6", optional = true }
 hex = { version = "0.4.2", features = ["serde"] }
-lazy_static = "1.4.0"
 pkgar-core = { path = "../pkgar-core", version = "0.2.1" }
 seckey = "0.12"
 serde = { version = "1", default-features = false, features = ["derive"] }
-termion = "4"
+termion = { version = "4", optional = true }
 toml = "0.8"
 thiserror = "2"
 
 [features]
 default = []
-cli = ["clap"]
+cli = ["clap", "termion", "dirs"]

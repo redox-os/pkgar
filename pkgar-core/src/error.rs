@@ -22,7 +22,7 @@ impl Display for Error {
         use Error::*;
 
         let msg = match self {
-            Dryoc(err) => format!("Dryoc: {:?}", err),
+            Dryoc(err) => format!("Dryoc Error: {err}"),
             InvalidBlake3 => "Invalid Blake3".to_string(),
             InvalidData => "Data Invalid".to_string(),
             InvalidKey => "Key Invalid".to_string(),

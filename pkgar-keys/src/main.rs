@@ -96,7 +96,7 @@ fn cli() -> Result<i32, Error> {
 
 fn main() {
     let code = cli().unwrap_or_else(|err| {
-        eprintln!("error: {err:?}");
+        eprintln!("error: {err}");
         process::exit(1);
     });
     process::exit(code);

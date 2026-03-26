@@ -28,6 +28,8 @@ pub enum Error {
     PassphraseIncorrect,
     #[error("Passphrases did not match")]
     PassphraseMismatch,
+    #[error("A passphrase to decrypt secret key is required")]
+    PassphraseRequired,
 }
 
 impl fmt::Debug for Error {
