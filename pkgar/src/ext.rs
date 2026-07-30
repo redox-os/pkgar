@@ -1,4 +1,5 @@
 //! Extention traits for base types defined in `pkgar-core`.
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{self, Read, Seek, Take, Write};
@@ -109,6 +110,37 @@ pub(crate) fn copy_and_hash<R: Read, W: Write>(
         write.write_all(&buf[..count])?;
     }
     Ok((written, hasher.finalize()))
+}
+
+/// Create a diff between two entries, returns (entries_to_install, entries_to_remove, skipped_entries_count)
+pub(crate) fn diff_package(
+    old_entries: Vec<Entry>,
+    new_entries: Vec<Entry>,
+) -> Result<(Vec<Entry>, Vec<Entry>, usize), Error> {
+    let mut old_map = BTreeMap::new();
+    for entry in old_entries {
+        old_map.insert(entry.check_path()?.to_path_buf(), entry);
+    }
+    let mut entries_to_install = Vec::new();
+    let mut skipped_entries_count = 0;
+    for entry in new_entries {
+        let path = entry.check_path()?;
+        old_map.remove(path);
+
+        match old_map.get(path) {
+            Some(old_hash) if old_hash.blake3() == entry.blake3() => {
+                skipped_entries_count += 1;
+            }
+            _ => {
+                entries_to_install.push(entry);
+            }
+        }
+    }
+    let mut entries_to_remove = Vec::new();
+    for old_e in old_map.into_values() {
+        entries_to_remove.push(old_e);
+    }
+    Ok((entries_to_install, entries_to_remove, skipped_entries_count))
 }
 
 /// Implements reader based on data flags
