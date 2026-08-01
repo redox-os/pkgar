@@ -1,65 +1,45 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{symlink, OpenOptionsExt};
+use std::os::unix::fs::{symlink, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 use blake3::Hash;
 use pkgar_core::{Entry, Mode, PackageSrc};
 
-use crate::ext::{copy_and_hash, EntryExt, PackageSrcExt};
+use crate::ext::{copy_and_hash, diff_package, EntryExt, PackageSrcExt};
 use crate::{wrap_io_err, Error, READ_WRITE_HASH_BUF_SIZE};
 
-fn file_exists(path: impl AsRef<Path>) -> Result<bool, Error> {
-    let path = path.as_ref();
-    if let Err(err) = fs::symlink_metadata(path) {
-        if err.kind() == io::ErrorKind::NotFound {
-            Ok(false)
-        } else {
-            Err(Error::Io {
-                source: err,
-                path: Some(path.to_path_buf()),
-                context: "Checking file",
-            })
-        }
-    } else {
-        Ok(true)
-    }
-}
-
 /// Determine the temporary path for a file, and create its parent directories.
-/// Returns `Err` if the target path has no parent (was `/`).
+/// Returns `Err` if the target path is invalid or I/O error.
 fn temp_path(target_path: impl AsRef<Path>, entry_hash: Hash) -> Result<PathBuf, Error> {
     let target_path = target_path.as_ref();
-    let hash_path = format!(".pkgar.{}", entry_hash.to_hex());
-    let parent_dir = target_path
-        .parent()
-        .ok_or_else(|| Error::InvalidPathComponent {
-            invalid: PathBuf::from("/"),
-            path: target_path.to_path_buf(),
+    let (Some(dir), Some(base)) = (target_path.parent(), target_path.file_name()) else {
+        return Err(Error::InvalidPathComponent {
+            invalid: target_path.into(),
+            path: target_path.into(),
             entry: None,
-        })?;
-
-    let tmp_name = if let Some(filename) = target_path.file_name() {
-        let name_path = format!(".pkgar.{}", Path::new(filename).display());
-
-        if file_exists(parent_dir.join(&name_path))? {
-            hash_path
-        } else {
-            name_path
-        }
-    } else {
-        // It's fine to not check the existence of this file, since if the a
-        //   file with the same hash already exists, we know what its
-        //   contents should be.
-        hash_path
+        });
     };
+    if !dir.is_dir() {
+        fs::create_dir_all(dir).map_err(wrap_io_err!(dir.to_path_buf(), "Creating dir"))?;
+    }
+    let tmp_path = dir.join(".pkgar").with_added_extension(base);
+    if !tmp_path.exists() {
+        return Ok(tmp_path);
+    }
 
-    fs::create_dir_all(parent_dir)
-        .map_err(wrap_io_err!(parent_dir.to_path_buf(), "Creating dir"))?;
-    Ok(parent_dir.join(tmp_name))
+    let hash_path = tmp_path.with_added_extension(entry_hash.to_hex().as_str());
+    // TODO: what if this is a directory?
+    if hash_path.is_file() {
+        // Definitely not a personal file, safe to skip hash comparison.
+        fs::remove_file(&hash_path)
+            .map_err(wrap_io_err!(dir.to_path_buf(), "Removing old temp file"))?;
+    }
+
+    Ok(hash_path)
 }
 
 /// Individual atomic file operation
@@ -103,139 +83,116 @@ impl Action {
 /// A struct that holds many atomic file operation
 pub struct Transaction {
     actions: Vec<Action>,
+    path_map: BTreeMap<PathBuf, Option<String>>,
+    possible_conflicts: Vec<TransactionConflict>,
+    // this is here to avoid allocating too often
+    buf: Vec<u8>,
+    indexed: usize,
     committed: usize,
 }
 
 impl Transaction {
-    fn new(actions: Vec<Action>) -> Self {
+    /// Creates new empty transaction that can be added later
+    pub fn new() -> Self {
         Self {
-            actions,
+            actions: Vec::new(),
+            path_map: BTreeMap::new(),
+            possible_conflicts: Vec::new(),
             committed: 0,
+            indexed: 0,
+            buf: vec![0; READ_WRITE_HASH_BUF_SIZE],
         }
     }
 
-    /// Prepare transactions to install from a pkgar file.
-    /// Overwrites any existing file (customizable with `install_with_entries`).
+    /// Creates new transactions to install from a pkgar file. Overwrites any existing file.
     pub fn install<Pkg>(src: &mut Pkg, base_dir: impl AsRef<Path>) -> Result<Self, Error>
     where
         Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
     {
         let entries = src.read_entries()?;
-        Self::install_with_entries(src, entries, base_dir, true)
+        let mut transaction = Transaction::new();
+        transaction.install_with_entries(src, entries, base_dir, true)?;
+        Ok(transaction)
     }
 
-    /// Prepare transactions to install from a pkgar file with filtered or modified entries
+    /// Add transactions to install from a pkgar file with filtered or modified entries.
+    ///
+    /// To allow overwriting existing files, set `skip_local_check` to `true`.
     pub fn install_with_entries<Pkg>(
+        &mut self,
         src: &mut Pkg,
         entries: Vec<Entry>,
         base_dir: impl AsRef<Path>,
         skip_local_check: bool,
-    ) -> Result<Self, Error>
+    ) -> Result<(), Error>
     where
         Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
     {
-        let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
-
-        let mut actions = Vec::with_capacity(entries.len());
-
         for entry in &entries {
-            let relative_path = entry.check_path()?;
-
-            let target_path = base_dir.as_ref().join(relative_path);
-            //HELP: Under what circumstances could this ever fail?
-            assert!(
-                target_path.starts_with(&base_dir),
-                "target path was not in the base path"
-            );
-
-            let tmp_path = temp_path(&target_path, entry.blake3())?;
-
-            let mode = entry.mode().map_err(Error::from)?;
-            let mut data_reader = src.data_reader(&entry)?;
-
-            let (entry_data_size, entry_data_hash) = match mode.kind() {
-                Mode::FILE => {
-                    // Tempfiles will be overwritten, users should use MergedTransaction to handle transaction conflicts
-                    let mut tmp_file = fs::OpenOptions::new()
-                        .write(true)
-                        .create(true)
-                        .truncate(true)
-                        .mode(mode.perm().bits())
-                        .open(&tmp_path)
-                        .map_err(wrap_io_err!(tmp_path, "Opening tempfile"))?;
-
-                    let (size, hash) = copy_and_hash(&mut data_reader, &mut tmp_file, &mut buf)
-                        .map_err(wrap_io_err!(tmp_path, "Copying entry to tempfile"))?;
-
-                    actions.push(Action::Rename(tmp_path, target_path));
-                    (size, hash)
-                }
-                Mode::SYMLINK => {
-                    let mut data = Vec::new();
-                    let (size, hash) = copy_and_hash(&mut data_reader, &mut data, &mut buf)
-                        .map_err(wrap_io_err!(tmp_path, "Copying entry to tempfile"))?;
-
-                    let sym_target = Path::new(OsStr::from_bytes(&data));
-                    let mut retried = false;
-                    loop {
-                        match symlink(sym_target, &tmp_path)
-                            .map_err(wrap_io_err!(tmp_path, "Symlinking to tmp"))
-                        {
-                            Ok(_) => break,
-                            Err(e) if retried => return Err(e),
-                            Err(_) => {
-                                // necessary because symlink can't overwrite
-                                fs::remove_file(&tmp_path)
-                                    .map_err(wrap_io_err!(tmp_path, "Unlinking old symlink tmp"))?;
-                                retried = true
-                            }
-                        }
-                    }
-                    actions.push(Action::Rename(tmp_path, target_path));
-                    (size, hash)
-                }
-                _ => {
-                    return Err(Error::from(pkgar_core::Error::InvalidMode(mode.bits())));
-                }
-            };
-
-            entry.verify(entry_data_hash, entry_data_size, &data_reader)?;
-            data_reader.finish(src)?;
+            self.install_one(src, entry, &base_dir, skip_local_check)?
         }
 
-        if !skip_local_check {
-            // Do not overwrite locally modified install.
-            let mut allowed_install_actions = Vec::with_capacity(actions.len());
-            let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
-
-            for (i, action) in actions.into_iter().enumerate() {
-                let target_path = action.target_file();
-                if !target_path.is_file() {
-                    allowed_install_actions.push(action);
-                    continue;
-                }
-                let mut candidate = File::open(&target_path)
-                    .map_err(wrap_io_err!(target_path, "Opening candidate"))?;
-
-                // Ensure that the deletion candidate on disk has not been modified
-                let (_, entry_data_hash) = copy_and_hash(&mut candidate, &mut io::sink(), &mut buf)
-                    .map_err(wrap_io_err!(target_path, "Hashing file for entry"))?;
-
-                if entry_data_hash == entries[i].blake3() {
-                    allowed_install_actions.push(action);
-                } else {
-                    action.abort()?;
-                }
-            }
-            actions = allowed_install_actions;
-        }
-
-        Ok(Transaction::new(actions))
+        Ok(())
     }
 
-    /// Prepare transactions to replace old files from a pkgar file.
+    /// Create a new action to install an [`Entry`] of `src` to `base_dir`.
+    ///
+    /// To allow overwriting existing files, set `skip_local_check` to `true`.
+    pub fn install_one<Pkg>(
+        &mut self,
+        src: &mut Pkg,
+        entry: &Entry,
+        base_dir: impl AsRef<Path>,
+        skip_local_check: bool,
+    ) -> Result<(), Error>
+    where
+        Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
+    {
+        let relative_path = entry.check_path()?;
+        let target_path = base_dir.as_ref().join(relative_path);
+        self.indexed += 1;
+        if !skip_local_check {
+            let existing_meta = fs::symlink_metadata(&target_path);
+            if existing_meta.is_ok_and(|s| s.is_file() || s.is_symlink()) {
+                return Ok(());
+            }
+        }
+        let tmp_path = temp_path(&target_path, entry.blake3())?;
+        let mode = entry.mode().map_err(Error::from)?;
+        let mut data_reader = src.data_reader(&entry)?;
+
+        let (entry_data_size, entry_data_hash) = match mode.kind() {
+            Mode::FILE => {
+                let mut tmp_file = fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .mode(mode.perm().bits())
+                    .open(&tmp_path)
+                    .map_err(wrap_io_err!(tmp_path, "Opening tempfile"))?;
+
+                self.copy_and_hash(&mut data_reader, &mut tmp_file)?
+            }
+            Mode::SYMLINK => {
+                let mut data = Vec::new();
+                let (size, hash) = self.copy_and_hash(&mut data_reader, &mut data)?;
+                let sym_target = Path::new(OsStr::from_bytes(&data));
+                symlink(sym_target, &tmp_path)
+                    .map_err(wrap_io_err!(tmp_path, "Symlinking to tmp"))?;
+                (size, hash)
+            }
+            _ => {
+                return Err(Error::from(pkgar_core::Error::InvalidMode(mode.bits())));
+            }
+        };
+        entry.verify(entry_data_hash, entry_data_size, &data_reader)?;
+        data_reader.finish(src)?;
+        self.push_action(Action::Rename(tmp_path, target_path), Some(src));
+        Ok(())
+    }
+
+    /// Create new transactions to replace old files from a pkgar file.
     /// Does not overwrite existing file if the file is not updated between two package.
-    /// Does not replace or remove existing file if the file is changed locally (customizable with `replace_with_entries`).
+    /// Does not replace or remove existing file if the file is changed locally.
     pub fn replace<Pkg>(
         old: &mut Pkg,
         new: &mut Pkg,
@@ -246,102 +203,161 @@ impl Transaction {
     {
         let old_entries = old.read_entries()?;
         let new_entries = new.read_entries()?;
-        Self::replace_with_entries(old_entries, new_entries, new, base_dir, false)
+        let mut transaction = Transaction::new();
+        transaction.replace_with_entries(old_entries, new_entries, new, base_dir, false)?;
+        Ok(transaction)
     }
 
-    /// Prepare transactions to replace old files from a pkgar file with filtered or modified entries
+    /// Add transactions to replace old files from a pkgar file with filtered or modified entries.
+    /// To skip checking and allow overwrite locally modified files being replaced, set `skip_local_check` to true.
     pub fn replace_with_entries<Pkg>(
+        &mut self,
         old_entries: Vec<Entry>,
         new_entries: Vec<Entry>,
         new: &mut Pkg,
         base_dir: impl AsRef<Path>,
         skip_local_check: bool,
-    ) -> Result<Transaction, Error>
+    ) -> Result<(), Error>
     where
         Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
     {
-        let mut old_map = HashMap::with_capacity(old_entries.len());
-        for entry in old_entries {
-            old_map.insert(entry.check_path()?.to_path_buf(), entry);
-        }
+        let (entries_to_install, entries_to_remove) =
+            self.replace_diff(old_entries, new_entries)?;
 
-        let mut entries_to_install = Vec::new();
+        self.install_with_entries(new, entries_to_install.clone(), &base_dir, skip_local_check)?;
 
-        for entry in new_entries {
-            let path = entry.check_path()?;
-            old_map.remove(path);
+        self.remove_with_entries(entries_to_remove, &base_dir, skip_local_check)?;
 
-            match old_map.get(path) {
-                Some(old_hash) if old_hash.blake3() == entry.blake3() => {
-                    continue;
-                }
-                _ => {
-                    entries_to_install.push(entry);
-                }
-            }
-        }
-
-        let mut entries_to_remove = Vec::new();
-        for old_e in old_map.into_values() {
-            entries_to_remove.push(old_e);
-        }
-
-        let mut trans = Self::install_with_entries(
-            new,
-            entries_to_install.clone(),
-            &base_dir,
-            skip_local_check,
-        )?;
-        let remove_trans =
-            Self::remove_with_entries(entries_to_remove, &base_dir, skip_local_check)?;
-
-        trans.actions.extend(remove_trans.actions);
-
-        Ok(trans)
+        Ok(())
     }
 
-    /// Prepare transactions to remove files from a pkgar file.
-    /// Does not remove files with different hash (customizable with `remove_with_entries`)
+    /// Get diff between two packages, return tuple of two [`Vec`] that need to be
+    /// consumed to [`Self::install_one`] and [`Self::remove_one`] (in that order).
+    pub fn replace_diff(
+        &mut self,
+        old_entries: Vec<Entry>,
+        new_entries: Vec<Entry>,
+    ) -> Result<(Vec<Entry>, Vec<Entry>), Error> {
+        let (entries_to_install, entries_to_remove, skipped_entries) =
+            diff_package(old_entries, new_entries)?;
+
+        // neither added nor removed, so count as two
+        self.indexed += 2 * skipped_entries;
+
+        Ok((entries_to_install, entries_to_remove))
+    }
+
+    /// Prepare transactions to remove files from a pkgar file.  Does not remove files with different hash
     pub fn remove<Pkg>(src: &mut Pkg, base_dir: impl AsRef<Path>) -> Result<Self, Error>
     where
-        Pkg: PackageSrc<Err = Error>,
+        Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
     {
         let entries = src.read_entries()?;
-        Self::remove_with_entries(entries, base_dir, false)
+        let mut transaction = Transaction::new();
+        transaction.remove_with_entries(entries, base_dir, false)?;
+        Ok(transaction)
     }
 
-    /// Prepare transactions to remove files from a pkgar file with filtered or modified entries
+    /// Prepare transactions to remove files from a pkgar file with filtered or modified entries.
+    ///
+    /// To skip checking and allow removal for locally modified files, set `skip_local_check` to `true`.
     pub fn remove_with_entries(
+        &mut self,
         entries: Vec<Entry>,
         base_dir: impl AsRef<Path>,
         skip_local_check: bool,
-    ) -> Result<Self, Error> {
-        let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
-
-        let mut actions = Vec::with_capacity(entries.len());
-
+    ) -> Result<(), Error> {
         for entry in entries {
-            let relative_path = entry.check_path()?;
+            self.remove_one(entry, &base_dir, skip_local_check)?;
+        }
+        Ok(())
+    }
 
-            let target_path = base_dir.as_ref().join(relative_path);
-            // Under what circumstances could this ever fail?
-            assert!(
-                target_path.starts_with(&base_dir),
-                "target path was not in the base path"
-            );
+    /// Create a new action to uninstall an [`Entry`] to `base_dir`.
+    ///
+    /// To skip checking and allow removal for locally modified files, set `skip_local_check` to `true`.
+    pub fn remove_one(
+        &mut self,
+        entry: Entry,
+        base_dir: &impl AsRef<Path>,
+        skip_local_check: bool,
+    ) -> Result<(), Error> {
+        let relative_path = entry.check_path()?;
+        let target_path = base_dir.as_ref().join(relative_path);
+        self.indexed += 1;
 
-            let mut candidate = File::open(&target_path)
-                .map_err(wrap_io_err!(target_path.clone(), "Opening candidate"))?;
+        // Generally user don't care if this not exist, even without `skip_local_check`
+        let mode = match fs::symlink_metadata(&target_path) {
+            Ok(file) => file,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => {
+                return Err(wrap_io_err!(
+                    target_path.clone(),
+                    "Opening file metadata for removal"
+                )(e))
+            }
+        };
 
-            // Ensure that the deletion candidate on disk has not been modified
-            let (_, entry_data_hash) = copy_and_hash(&mut candidate, &mut io::sink(), &mut buf)
-                .map_err(wrap_io_err!(target_path.clone(), "Hashing file for entry"))?;
+        if skip_local_check {
+            self.actions.push(Action::Remove(target_path));
+            return Ok(());
+        }
 
-            if skip_local_check || entry_data_hash == entry.blake3() {
-                actions.push(Action::Remove(target_path));
+        let (_, entry_data_hash) = match (mode.is_file(), mode.is_symlink()) {
+            (true, false) => {
+                let mut existing = File::open(&target_path)
+                    .map_err(wrap_io_err!(&target_path, "Opening file for removal"))?;
+
+                self.copy_and_hash(&mut existing, &mut io::sink())?
+            }
+            (_, true) => {
+                let existing = fs::read_link(&target_path)
+                    .map_err(wrap_io_err!(&target_path, "Opening symlink for removal"))?;
+                let mut data_reader = existing.as_os_str().as_bytes();
+                self.copy_and_hash(&mut data_reader, &mut io::sink())?
+            }
+            _ => {
+                return Err(Error::from(pkgar_core::Error::InvalidMode(mode.mode())));
+            }
+        };
+
+        if entry_data_hash == entry.blake3() {
+            self.actions.push(Action::Remove(target_path));
+        }
+        Ok(())
+    }
+
+    /// Internal function to push new action
+    fn push_action<Pkg>(&mut self, action: Action, src: Option<&Pkg>)
+    where
+        Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
+    {
+        self.indexed += 1;
+        let action_key = action.target_file();
+        match self.path_map.entry(action_key.to_path_buf()) {
+            std::collections::btree_map::Entry::Vacant(vacant_entry) => {
+                vacant_entry.insert(src.map(|s| s.path().to_string()));
+                self.actions.push(action);
+            }
+            std::collections::btree_map::Entry::Occupied(occupied_entry) => {
+                // When conflicts happened, it's assumed to be overwritten
+                // However the order doesn't matter, so actions is not touched
+                self.possible_conflicts.push(TransactionConflict {
+                    conflicted_path: action_key.to_path_buf(),
+                    former_src: occupied_entry.get().clone(),
+                    newer_src: src.map(|s| s.path().to_string()),
+                });
             }
         }
-        Ok(Transaction::new(actions))
+    }
+
+    /// Same as [`copy_and_hash`]
+    fn copy_and_hash<R: std::io::Read, W: std::io::Write>(
+        &mut self,
+        read: &mut R,
+        write: &mut W,
+    ) -> Result<(u64, Hash), Error> {
+        copy_and_hash(read, write, &mut self.buf).map_err(wrap_io_err!("Copying and hashing file"))
     }
 
     /// Apply all pending actions from end to start.
@@ -409,7 +425,7 @@ impl Transaction {
         Ok(self.committed)
     }
 
-    /// Get how much actions are pending
+    /// Get how much actions are pending to commit.
     pub fn pending_commit(&self) -> usize {
         self.actions.len()
     }
@@ -425,49 +441,27 @@ impl Transaction {
         self.committed = 0;
     }
 
+    /// Get how much entry is indexed.
+    /// Any entry that have been added is counted as indexed no matter it will be processed or not.
+    pub fn total_indexed(&self) -> usize {
+        self.indexed
+    }
+
+    /// Resets indexed counter
+    pub fn reset_indexed(&mut self) {
+        self.indexed = 0;
+    }
+
     /// Peek pending actions.
     /// Actions are executed from last item.
     pub fn get_actions(&self) -> &Vec<Action> {
         &self.actions
     }
-}
 
-/// A struct that helps merging multiple transaction into one.
-/// All transactions are validated to make sure there's no two action holding the same target file.
-pub struct MergedTransaction {
-    actions: Vec<Action>,
-    path_map: BTreeMap<PathBuf, Option<String>>,
-    possible_conflicts: Vec<TransactionConflict>,
-}
-
-impl MergedTransaction {
-    pub fn new() -> Self {
-        MergedTransaction {
-            actions: Vec::new(),
-            path_map: BTreeMap::new(),
-            possible_conflicts: Vec::new(),
-        }
-    }
-    fn push_action<Pkg>(&mut self, action: Action, src: Option<&Pkg>)
-    where
-        Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
-    {
-        let action_key = action.target_file();
-        match self.path_map.entry(action_key.to_path_buf()) {
-            std::collections::btree_map::Entry::Vacant(vacant_entry) => {
-                vacant_entry.insert(src.map(|s| s.path().to_string()));
-                self.actions.push(action);
-            }
-            std::collections::btree_map::Entry::Occupied(occupied_entry) => {
-                // When conflicts happened, it's assumed to be overwritten
-                // However the order doesn't matter, so actions is not touched
-                self.possible_conflicts.push(TransactionConflict {
-                    conflicted_path: action_key.to_path_buf(),
-                    former_src: occupied_entry.get().clone(),
-                    newer_src: src.map(|s| s.path().to_string()),
-                });
-            }
-        }
+    /// Get list of conflicted actions and their sources if given.
+    /// The action that is actually used will be the newer one.
+    pub fn get_possible_conflicts(&self) -> &Vec<TransactionConflict> {
+        &self.possible_conflicts
     }
 
     /// Add a newer transaction with their source package for optional conflict identification
@@ -478,22 +472,6 @@ impl MergedTransaction {
         for action in newer.actions {
             self.push_action(action, src);
         }
-    }
-
-    /// Get list of conflicted actions and their sources if given.
-    /// The action that is actually used will be the newer one.
-    pub fn get_possible_conflicts(&self) -> &Vec<TransactionConflict> {
-        &self.possible_conflicts
-    }
-
-    /// Peek into held actions
-    pub fn get_actions(&self) -> &Vec<Action> {
-        &self.actions
-    }
-
-    /// Convert into single giant transaction
-    pub fn into_transaction(self) -> Transaction {
-        Transaction::new(self.actions)
     }
 }
 
