@@ -128,7 +128,7 @@ impl Transaction {
     pub fn install_with_entries<Pkg>(
         &mut self,
         src: &mut Pkg,
-        entries: &Vec<Entry>,
+        entries: &[Entry],
         base_dir: impl AsRef<Path>,
         skip_local_check: bool,
     ) -> Result<(), Error>
@@ -217,8 +217,8 @@ impl Transaction {
         let new_entries = new.read_entries()?;
         let mut transaction = Transaction::new();
         transaction.replace_with_entries(
-            old_entries,
-            new_entries,
+            &old_entries,
+            &new_entries,
             Some(old),
             new,
             base_dir,
@@ -231,8 +231,8 @@ impl Transaction {
     /// To skip checking and allow overwrite locally modified files being replaced, set `skip_local_check` to true.
     pub fn replace_with_entries<Pkg>(
         &mut self,
-        old_entries: Vec<Entry>,
-        new_entries: Vec<Entry>,
+        old_entries: &[Entry],
+        new_entries: &[Entry],
         old: Option<&Pkg>,
         new: &mut Pkg,
         base_dir: impl AsRef<Path>,
@@ -255,8 +255,8 @@ impl Transaction {
     /// consumed to [`Self::install_one`] and [`Self::remove_one`] (in that order).
     pub fn replace_diff(
         &mut self,
-        old_entries: Vec<Entry>,
-        new_entries: Vec<Entry>,
+        old_entries: &[Entry],
+        new_entries: &[Entry],
     ) -> Result<(Vec<Entry>, Vec<Entry>), Error> {
         let (entries_to_install, entries_to_remove, skipped_entries) =
             diff_package(old_entries, new_entries)?;
@@ -284,7 +284,7 @@ impl Transaction {
     pub fn remove_with_entries<Pkg>(
         &mut self,
         src: Option<&Pkg>,
-        entries: &Vec<Entry>,
+        entries: &[Entry],
         base_dir: impl AsRef<Path>,
         skip_local_check: bool,
     ) -> Result<(), Error>
@@ -528,18 +528,18 @@ impl Transaction {
 
     /// Peek pending actions.
     /// Actions are executed from last item.
-    pub fn get_actions(&self) -> &Vec<Action> {
+    pub fn get_actions(&self) -> &[Action] {
         &self.actions
     }
 
     /// Get list of conflicted actions and their sources if given.
     /// The action that is actually used will be the newer one.
-    pub fn get_possible_conflicts(&self) -> &Vec<TransactionConflict> {
+    pub fn get_possible_conflicts(&self) -> &[TransactionConflict] {
         &self.possible_conflicts
     }
 
     /// Get list of entries that is ignored
-    pub fn get_ignored_entries(&self) -> &Vec<TransactionIgnored> {
+    pub fn get_ignored_entries(&self) -> &[TransactionIgnored] {
         &self.ignored_entries
     }
 
