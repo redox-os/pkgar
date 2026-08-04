@@ -78,13 +78,19 @@ impl Action {
             Action::Remove(path) => path.as_path(),
         }
     }
+
+    pub fn is_removal(&self) -> bool {
+        matches!(self, Action::Remove(..))
+    }
 }
 
 /// A struct that holds many atomic file operation
 pub struct Transaction {
     actions: Vec<Action>,
-    path_map: BTreeMap<PathBuf, Option<String>>,
+    /// Map of relative path and (src, is_removal)
+    path_map: BTreeMap<PathBuf, (Option<String>, bool)>,
     possible_conflicts: Vec<TransactionConflict>,
+    ignored_entries: Vec<TransactionIgnored>,
     // this is here to avoid allocating too often
     buf: Vec<u8>,
     indexed: usize,
@@ -98,6 +104,7 @@ impl Transaction {
             actions: Vec::new(),
             path_map: BTreeMap::new(),
             possible_conflicts: Vec::new(),
+            ignored_entries: Vec::new(),
             committed: 0,
             indexed: 0,
             buf: vec![0; READ_WRITE_HASH_BUF_SIZE],
@@ -111,7 +118,7 @@ impl Transaction {
     {
         let entries = src.read_entries()?;
         let mut transaction = Transaction::new();
-        transaction.install_with_entries(src, entries, base_dir, true)?;
+        transaction.install_with_entries(src, &entries, base_dir, true)?;
         Ok(transaction)
     }
 
@@ -121,14 +128,14 @@ impl Transaction {
     pub fn install_with_entries<Pkg>(
         &mut self,
         src: &mut Pkg,
-        entries: Vec<Entry>,
+        entries: &Vec<Entry>,
         base_dir: impl AsRef<Path>,
         skip_local_check: bool,
     ) -> Result<(), Error>
     where
         Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
     {
-        for entry in &entries {
+        for entry in entries {
             self.install_one(src, entry, &base_dir, skip_local_check)?
         }
 
@@ -154,6 +161,11 @@ impl Transaction {
         if !skip_local_check {
             let existing_meta = fs::symlink_metadata(&target_path);
             if existing_meta.is_ok_and(|s| s.is_file() || s.is_symlink()) {
+                self.report_ignored(
+                    relative_path,
+                    Some(src.path().to_string()),
+                    TransactionIgnoredReason::Exists,
+                );
                 return Ok(());
             }
         }
@@ -204,7 +216,14 @@ impl Transaction {
         let old_entries = old.read_entries()?;
         let new_entries = new.read_entries()?;
         let mut transaction = Transaction::new();
-        transaction.replace_with_entries(old_entries, new_entries, new, base_dir, false)?;
+        transaction.replace_with_entries(
+            old_entries,
+            new_entries,
+            Some(old),
+            new,
+            base_dir,
+            false,
+        )?;
         Ok(transaction)
     }
 
@@ -214,6 +233,7 @@ impl Transaction {
         &mut self,
         old_entries: Vec<Entry>,
         new_entries: Vec<Entry>,
+        old: Option<&Pkg>,
         new: &mut Pkg,
         base_dir: impl AsRef<Path>,
         skip_local_check: bool,
@@ -224,9 +244,9 @@ impl Transaction {
         let (entries_to_install, entries_to_remove) =
             self.replace_diff(old_entries, new_entries)?;
 
-        self.install_with_entries(new, entries_to_install.clone(), &base_dir, skip_local_check)?;
+        self.install_with_entries(new, &entries_to_install, &base_dir, skip_local_check)?;
 
-        self.remove_with_entries(entries_to_remove, &base_dir, skip_local_check)?;
+        self.remove_with_entries(old, &entries_to_remove, &base_dir, skip_local_check)?;
 
         Ok(())
     }
@@ -254,21 +274,25 @@ impl Transaction {
     {
         let entries = src.read_entries()?;
         let mut transaction = Transaction::new();
-        transaction.remove_with_entries(entries, base_dir, false)?;
+        transaction.remove_with_entries(Some(src), &entries, base_dir, false)?;
         Ok(transaction)
     }
 
     /// Prepare transactions to remove files from a pkgar file with filtered or modified entries.
     ///
     /// To skip checking and allow removal for locally modified files, set `skip_local_check` to `true`.
-    pub fn remove_with_entries(
+    pub fn remove_with_entries<Pkg>(
         &mut self,
-        entries: Vec<Entry>,
+        src: Option<&Pkg>,
+        entries: &Vec<Entry>,
         base_dir: impl AsRef<Path>,
         skip_local_check: bool,
-    ) -> Result<(), Error> {
+    ) -> Result<(), Error>
+    where
+        Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
+    {
         for entry in entries {
-            self.remove_one(entry, &base_dir, skip_local_check)?;
+            self.remove_one(src, entry, &base_dir, skip_local_check)?;
         }
         Ok(())
     }
@@ -276,12 +300,16 @@ impl Transaction {
     /// Create a new action to uninstall an [`Entry`] to `base_dir`.
     ///
     /// To skip checking and allow removal for locally modified files, set `skip_local_check` to `true`.
-    pub fn remove_one(
+    pub fn remove_one<Pkg>(
         &mut self,
-        entry: Entry,
-        base_dir: &impl AsRef<Path>,
+        src: Option<&Pkg>,
+        entry: &Entry,
+        base_dir: impl AsRef<Path>,
         skip_local_check: bool,
-    ) -> Result<(), Error> {
+    ) -> Result<(), Error>
+    where
+        Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
+    {
         let relative_path = entry.check_path()?;
         let target_path = base_dir.as_ref().join(relative_path);
         self.indexed += 1;
@@ -289,7 +317,16 @@ impl Transaction {
         // Generally user don't care if this not exist, even without `skip_local_check`
         let mode = match fs::symlink_metadata(&target_path) {
             Ok(file) => file,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                if !skip_local_check {
+                    self.report_ignored(
+                        relative_path,
+                        src.map(|s| s.path().to_string()),
+                        TransactionIgnoredReason::Missing,
+                    );
+                }
+                return Ok(());
+            }
             Err(e) => {
                 return Err(wrap_io_err!(
                     target_path.clone(),
@@ -299,7 +336,7 @@ impl Transaction {
         };
 
         if skip_local_check {
-            self.actions.push(Action::Remove(target_path));
+            self.push_action(Action::Remove(target_path), src);
             return Ok(());
         }
 
@@ -322,7 +359,13 @@ impl Transaction {
         };
 
         if entry_data_hash == entry.blake3() {
-            self.actions.push(Action::Remove(target_path));
+            self.push_action(Action::Remove(target_path), src);
+        } else {
+            self.report_ignored(
+                relative_path,
+                src.map(|s| s.path().to_string()),
+                TransactionIgnoredReason::Modified,
+            );
         }
         Ok(())
     }
@@ -336,21 +379,52 @@ impl Transaction {
         let action_key = action.target_file();
         match self.path_map.entry(action_key.to_path_buf()) {
             std::collections::btree_map::Entry::Vacant(vacant_entry) => {
-                vacant_entry.insert(src.map(|s| s.path().to_string()));
+                vacant_entry.insert((src.map(|s| s.path().to_string()), action.is_removal()));
                 self.actions.push(action);
             }
             std::collections::btree_map::Entry::Occupied(occupied_entry) => {
-                // When conflicts happened, it's assumed to be overwritten
-                // However the order doesn't matter, so actions is not touched
-                self.possible_conflicts.push(TransactionConflict {
-                    conflicted_path: action_key.to_path_buf(),
-                    former_src: occupied_entry.get().clone(),
-                    newer_src: src.map(|s| s.path().to_string()),
-                });
+                match (occupied_entry.get().1, action.is_removal()) {
+                    // safe to merge
+                    (true, true) => {}
+                    // When conflicts happened, it will not get overwritten
+                    (false, false) => {
+                        self.possible_conflicts.push(TransactionConflict {
+                            conflicted_path: action_key.to_path_buf(),
+                            former_src: occupied_entry.get().0.clone(),
+                            newer_src: src.map(|s| s.path().to_string()),
+                        });
+                    }
+                    // worst case just happened
+                    (false, true) | (true, false) => {
+                        let src = if !action.is_removal() {
+                            occupied_entry.get().0.as_ref().map(|s| s.to_string())
+                        } else {
+                            src.map(|s| s.path().to_string())
+                        };
+                        self.report_ignored(action_key, src, TransactionIgnoredReason::Exists);
+                        if !action.is_removal() {
+                            // prioritize non-removal action to survive from removal,
+                            // as we cannot abort this Action on this function
+                            self.actions.insert(0, action);
+                        }
+                    }
+                }
             }
         }
     }
 
+    fn report_ignored(
+        &mut self,
+        path: &Path,
+        src: Option<String>,
+        reason: TransactionIgnoredReason,
+    ) {
+        self.ignored_entries.push(TransactionIgnored {
+            ignored_path: path.to_path_buf(),
+            src: src,
+            reason,
+        });
+    }
     /// Same as [`copy_and_hash`]
     fn copy_and_hash<R: std::io::Read, W: std::io::Write>(
         &mut self,
@@ -464,6 +538,11 @@ impl Transaction {
         &self.possible_conflicts
     }
 
+    /// Get list of entries that is ignored
+    pub fn get_ignored_entries(&self) -> &Vec<TransactionIgnored> {
+        &self.ignored_entries
+    }
+
     /// Add a newer transaction with their source package for optional conflict identification
     pub fn merge<Pkg>(&mut self, newer: Transaction, src: Option<&Pkg>)
     where
@@ -475,8 +554,26 @@ impl Transaction {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct TransactionConflict {
     pub conflicted_path: PathBuf,
     pub former_src: Option<String>,
     pub newer_src: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TransactionIgnored {
+    pub ignored_path: PathBuf,
+    pub src: Option<String>,
+    pub reason: TransactionIgnoredReason,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum TransactionIgnoredReason {
+    /// The file is already gone
+    Missing,
+    /// The file have different hash
+    Modified,
+    /// The file is already exist
+    Exists,
 }
