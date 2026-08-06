@@ -114,8 +114,8 @@ pub(crate) fn copy_and_hash<R: Read, W: Write>(
 
 /// Create a diff between two entries, returns (entries_to_install, entries_to_remove, skipped_entries_count)
 pub(crate) fn diff_package(
-    old_entries: Vec<Entry>,
-    new_entries: Vec<Entry>,
+    old_entries: &[Entry],
+    new_entries: &[Entry],
 ) -> Result<(Vec<Entry>, Vec<Entry>, usize), Error> {
     let mut old_map = BTreeMap::new();
     for entry in old_entries {
@@ -132,13 +132,13 @@ pub(crate) fn diff_package(
                 skipped_entries_count += 1;
             }
             _ => {
-                entries_to_install.push(entry);
+                entries_to_install.push(entry.clone());
             }
         }
     }
     let mut entries_to_remove = Vec::new();
     for old_e in old_map.into_values() {
-        entries_to_remove.push(old_e);
+        entries_to_remove.push(old_e.clone());
     }
     Ok((entries_to_install, entries_to_remove, skipped_entries_count))
 }
