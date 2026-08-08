@@ -14,16 +14,23 @@ use crate::{wrap_io_err, Error};
 
 /// Handy associated functions for `pkgar_core::Entry` that depend on std
 pub trait EntryExt {
+    /// Iterate the components of the path and ensure that there are no
+    /// non-normal components.
     fn check_path(&self) -> Result<&Path, Error>;
 
+    /// Check if the entry path is valid and being inside of the `base`,
+    /// return a new entry with path relative from `base`.
+    fn sub_path(&self, base: &Path) -> Option<Self>
+    where
+        Self: Sized;
+
+    /// Verify is extracted blake3 or compressed size is correct
     fn verify<R>(&self, blake3: Hash, size: u64, reader: &DataReader<R>) -> Result<(), Error>
     where
         R: Sized;
 }
 
 impl EntryExt for Entry {
-    /// Iterate the components of the path and ensure that there are no
-    /// non-normal components.
     fn check_path(&self) -> Result<&Path, Error> {
         let path = Path::new(OsStr::from_bytes(self.path_bytes()));
         for component in path.components() {
@@ -42,7 +49,6 @@ impl EntryExt for Entry {
         Ok(path)
     }
 
-    /// Verify is extracted blake3 or compressed size is correct
     fn verify<R>(&self, blake3: Hash, size: u64, reader: &DataReader<R>) -> Result<(), Error> {
         if size != reader.unpacked_size && reader.unpacked_size != u64::MAX {
             Err(Error::LengthMismatch {
@@ -59,6 +65,18 @@ impl EntryExt for Entry {
         } else {
             Ok(())
         }
+    }
+
+    fn sub_path(&self, base: &Path) -> Option<Self> {
+        let path = self.check_path().ok()?;
+        let split = path.strip_prefix(base).ok()?;
+        let split_bytes = split.to_str()?.as_bytes();
+        let mut new = self.clone();
+        new.path = [0u8; _];
+        new.path
+            .get_mut(..split_bytes.len())?
+            .copy_from_slice(split_bytes);
+        Some(new)
     }
 }
 

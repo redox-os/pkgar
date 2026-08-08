@@ -1,6 +1,7 @@
 mod error;
 
 use std::fs::{self, File, OpenOptions};
+use std::io::Read;
 use std::io::Write;
 use std::ops::Deref;
 use std::os::unix::fs::OpenOptionsExt;
@@ -87,13 +88,40 @@ impl PublicKeyFile {
     }
 
     /// Parse a `PublicKeyFile` from `file` (in toml format).
-    pub fn open(file: impl AsRef<Path>) -> Result<PublicKeyFile, Error> {
+    pub fn open(file: impl AsRef<Path>) -> Result<Self, Error> {
         let content = fs::read_to_string(file).map_err(|source| Error::Io {
             source,
             path: None,
             context: "Reading public key",
         })?;
         toml::from_str(&content).map_err(Error::Deser)
+    }
+
+    /// Get a public key from pkgar header
+    pub fn from_header_raw(header: &pkgar_core::Header) -> Self {
+        Self {
+            pkey: header.public_key,
+        }
+    }
+
+    /// Get a public key from path to pkgar header.
+    /// The pkgar header will not be checked for validity.
+    pub fn from_header_path(header: impl AsRef<Path>) -> Result<Self, Error> {
+        let header = header.as_ref();
+        let mut file = fs::File::open(header).map_err(|source| Error::Io {
+            source,
+            path: Some(header.into()),
+            context: "Opening public key",
+        })?;
+        let mut buffer = vec![0u8; pkgar_core::HEADER_SIZE];
+        file.read_exact(&mut buffer).map_err(|source| Error::Io {
+            source,
+            path: Some(header.into()),
+            context: "Reading public key",
+        })?;
+        // SAFETY: We just want to read the public key, not to validate the header.
+        let header = unsafe { pkgar_core::Header::new_unchecked(&buffer)? };
+        Ok(Self::from_header_raw(header))
     }
 
     /// Write `self` serialized as toml to `w`.
@@ -113,6 +141,11 @@ impl PublicKeyFile {
             path: None,
             context: "Writing public key",
         })?)
+    }
+
+    /// Get hex representation of this public key
+    pub fn to_hex(&self) -> String {
+        hex::encode(self.pkey)
     }
 }
 
