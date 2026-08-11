@@ -375,7 +375,6 @@ impl Transaction {
     where
         Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
     {
-        self.indexed += 1;
         let action_key = action.target_file();
         match self.path_map.entry(action_key.to_path_buf()) {
             std::collections::btree_map::Entry::Vacant(vacant_entry) => {
@@ -548,6 +547,8 @@ impl Transaction {
     where
         Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
     {
+        self.indexed += newer.indexed;
+        self.committed += newer.committed;
         for action in newer.actions {
             self.push_action(action, src);
         }
