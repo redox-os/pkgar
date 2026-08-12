@@ -18,6 +18,10 @@ pub enum Architecture {
     AArch64 = 3,
     /// Riscv64, base arch (extension GC)
     RiscV64 = 4,
+    /// x86_64, v3 (x86_64-v3)
+    X86_64v3 = 17,
+    /// Aarch64, v8.2-A arch with optional extensions (Armv8.2-A+dotprod+fp16)
+    AArch64v8_2 = 19,
     Reserved(u8),
 }
 
@@ -60,6 +64,8 @@ impl HeaderFlags {
             2 => Architecture::X86,
             3 => Architecture::AArch64,
             4 => Architecture::RiscV64,
+            17 => Architecture::X86_64v3,
+            19 => Architecture::AArch64v8_2,
             v => Architecture::Reserved(v),
         }
     }
@@ -85,6 +91,8 @@ impl HeaderFlags {
             Architecture::X86 => 2,
             Architecture::AArch64 => 3,
             Architecture::RiscV64 => 4,
+            Architecture::X86_64v3 => 17,
+            Architecture::AArch64v8_2 => 19,
             Architecture::Reserved(n) => n,
         }
     }
@@ -112,5 +120,32 @@ impl From<u32> for HeaderFlags {
 impl Into<u32> for HeaderFlags {
     fn into(self) -> u32 {
         self.0
+    }
+}
+
+impl Architecture {
+    /// Check if this package `Architecture` flags is supported on target machine.
+    pub fn is_supported(self, target: Self) -> bool {
+        match self {
+            Architecture::Independent => true,
+            Architecture::X86_64 => matches!(target, Architecture::X86_64 | Architecture::X86_64v3),
+            Architecture::X86 => matches!(target, Architecture::X86),
+            Architecture::AArch64 => {
+                matches!(target, Architecture::AArch64 | Architecture::AArch64v8_2)
+            }
+            Architecture::RiscV64 => matches!(target, Architecture::RiscV64),
+            Architecture::X86_64v3 => matches!(target, Architecture::X86_64v3),
+            Architecture::AArch64v8_2 => matches!(target, Architecture::AArch64v8_2),
+            Architecture::Reserved(_) => false,
+        }
+    }
+
+    /// Get the base architecture of this flag, if this architecture flag is an extension
+    pub fn base_architecture(self) -> Option<Self> {
+        match self {
+            Architecture::X86_64v3 => Some(Architecture::X86_64),
+            Architecture::AArch64v8_2 => Some(Architecture::AArch64),
+            _ => None,
+        }
     }
 }

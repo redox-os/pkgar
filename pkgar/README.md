@@ -56,6 +56,8 @@ The data flags represent what data it contained, stored as 32 bitflags.
   - `2`: 32 bit x86, base arch (i586)
   - `3`: aarch64, base arch (Armv8-A)
   - `4`: riscv64, base arch (extension GC)
+  - `17`: x86_64, v3 arch (x86_64-v3)
+  - `19`: aarch64, v8.2-A arch with optional extensions (Armv8.2-A+dotprod+fp16)
   - others: reserved
 - bit 17-24, enumeration from 0-255 represent how the data file is packaged:
   - `0`: not compressed
