@@ -16,7 +16,7 @@ required-features = ["cli"]
 clap = { version = "2", optional = true }
 dirs = { version = "6", optional = true }
 hex = { version = "0.4.2", features = ["serde"] }
-pkgar-core = { path = "../pkgar-core", version = "0.2.2" }
+pkgar-core = { path = "../pkgar-core", version = "0.2.3" }
 seckey = "0.12"
 serde = { version = "1", default-features = false, features = ["derive"] }
 termion = { version = "4", optional = true }
