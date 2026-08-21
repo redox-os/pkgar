@@ -97,6 +97,12 @@ pub struct Transaction {
     committed: usize,
 }
 
+impl Default for Transaction {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Transaction {
     /// Creates new empty transaction that can be added later
     pub fn new() -> Self {
@@ -171,7 +177,7 @@ impl Transaction {
         }
         let tmp_path = temp_path(&target_path, entry.blake3())?;
         let mode = entry.mode().map_err(Error::from)?;
-        let mut data_reader = src.data_reader(&entry)?;
+        let mut data_reader = src.data_reader(entry)?;
 
         let (entry_data_size, entry_data_hash) = match mode.kind() {
             Mode::FILE => {
@@ -420,7 +426,7 @@ impl Transaction {
     ) {
         self.ignored_entries.push(TransactionIgnored {
             ignored_path: path.to_path_buf(),
-            src: src,
+            src,
             reason,
         });
     }
@@ -438,7 +444,7 @@ impl Transaction {
     /// if failed abort() is needed to clean up pending transaction.
     pub fn commit(&mut self) -> Result<usize, Error> {
         self.reset_committed();
-        while self.actions.len() > 0 {
+        while !self.actions.is_empty() {
             self.commit_one()?;
         }
         Ok(self.committed)
@@ -469,7 +475,7 @@ impl Transaction {
     pub fn abort(&mut self) -> Result<usize, Error> {
         let mut last_failed = false;
         self.reset_committed();
-        while self.actions.len() > 0 {
+        while !self.actions.is_empty() {
             if let Err(err) = self.abort_one() {
                 if last_failed {
                     return Err(err);

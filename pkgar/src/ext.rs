@@ -5,7 +5,6 @@ use std::fs::File;
 use std::io::{self, Read, Seek, Take, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path};
-use std::u64;
 
 use blake3::{Hash, Hasher};
 use pkgar_core::{Entry, Header, PackageSrc, Packaging};
@@ -71,7 +70,7 @@ impl EntryExt for Entry {
         let path = self.check_path().ok()?;
         let split = path.strip_prefix(base).ok()?;
         let split_bytes = split.to_str()?.as_bytes();
-        let mut new = self.clone();
+        let mut new = *self;
         new.path = [0u8; _];
         new.path
             .get_mut(..split_bytes.len())?
@@ -150,13 +149,13 @@ pub(crate) fn diff_package(
                 skipped_entries_count += 1;
             }
             _ => {
-                entries_to_install.push(entry.clone());
+                entries_to_install.push(*entry);
             }
         }
     }
     let mut entries_to_remove = Vec::new();
     for old_e in old_map.into_values() {
-        entries_to_remove.push(old_e.clone());
+        entries_to_remove.push(*old_e);
     }
     Ok((entries_to_install, entries_to_remove, skipped_entries_count))
 }
@@ -168,6 +167,7 @@ pub struct DataReader<R> {
     pub inner: DataReaderKind<R>,
 }
 
+#[expect(clippy::large_enum_variant, reason = "too short-lived to use heap")]
 pub enum DataReaderKind<R> {
     Uncompressed(Take<R>),
     LZMA2(lzma_rust2::Lzma2Reader<Take<R>>),
@@ -208,7 +208,7 @@ impl<R: Read + Seek> DataReader<R> {
             .map_err(|_| io::Error::from(io::ErrorKind::FileTooLarge))?
             as u64;
         pkg_file.seek(io::SeekFrom::Start(head_size + entry.offset))?;
-        Self::new(&header, pkg_file, entry.size)
+        Self::new(header, pkg_file, entry.size)
     }
 
     pub fn finish(self, source: &mut impl PackageSrcExt<R>) -> Result<(), Error> {
@@ -232,6 +232,7 @@ impl<R: Read> Read for DataReader<R> {
     }
 }
 /// Implements writer based on data flags
+#[expect(clippy::large_enum_variant, reason = "too short-lived to use heap")]
 pub enum DataWriter {
     Uncompressed(File),
     LZMA2(lzma_rust2::Lzma2Writer<File>),
@@ -257,7 +258,7 @@ impl DataWriter {
     pub fn new(header: Packaging, mut file: File, len: u64) -> std::io::Result<Self> {
         let writer = match header {
             Packaging::LZMA2 => {
-                file.write(&len.to_le_bytes())?;
+                file.write_all(&len.to_le_bytes())?;
                 Self::LZMA2(lzma_rust2::Lzma2Writer::new(
                     file,
                     lzma_rust2::Lzma2Options::with_preset(5),

@@ -419,7 +419,7 @@ impl Passwd {
 
     /// Get a key for symmetric key encryption from a password.
     pub(crate) fn gen_key(&self, salt: Salt) -> Option<Key> {
-        if self.bytes.read().len() > 0 {
+        if !self.bytes.read().is_empty() {
             let mut key = [0; 32];
             crypto_pwhash(
                 &mut key,
