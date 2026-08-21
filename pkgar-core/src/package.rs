@@ -41,7 +41,7 @@ pub trait PackageSrc {
         offset: u64,
         buf: &mut [u8],
     ) -> Result<usize, Self::Err> {
-        let end = Self::calculate_end(&entry, offset, &buf)?;
+        let end = Self::calculate_end(&entry, offset, buf)?;
 
         if end == 0 {
             return Ok(0);
@@ -54,10 +54,10 @@ pub trait PackageSrc {
 
     /// Helper to get end of buffer relative to entry
     fn calculate_end(entry: &Entry, offset: u64, buf: &[u8]) -> Result<usize, Self::Err> {
-        if offset as u64 > entry.size {
+        if offset > entry.size {
             return Ok(0);
         }
-        let mut end = usize::try_from(entry.size - offset as u64).map_err(Error::TryFromInt)?;
+        let mut end = usize::try_from(entry.size - offset).map_err(Error::TryFromInt)?;
         if end > buf.len() {
             end = buf.len();
         }

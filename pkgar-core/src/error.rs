@@ -1,7 +1,9 @@
+use alloc::boxed::Box;
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::ToString;
 use core::error;
 use core::fmt::{Display, Formatter, Result};
+use core::ops::Deref;
 
 #[derive(Debug)]
 pub enum Error {
@@ -13,7 +15,7 @@ pub enum Error {
     InvalidMode(u32),
     NotSupported,
     Overflow,
-    OverflowPath([u8; 256]),
+    OverflowPath(Box<[u8; 256]>),
     TryFromInt(core::num::TryFromIntError),
 }
 
@@ -31,7 +33,7 @@ impl Display for Error {
             NotSupported => "Data Not Supported".to_string(),
             Overflow => "Overflow".to_string(),
             OverflowPath(bytes) => {
-                format!("Path is Too Long: {:?}", String::from_utf8_lossy(bytes))
+                format!("Path is Too Long: {:?}", str::from_utf8(bytes.deref()))
             }
             TryFromInt(err) => format!("TryFromInt: {}", err),
         };

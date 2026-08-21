@@ -48,7 +48,11 @@ impl Header {
         Ok(header)
     }
 
-    /// Parse header from raw header data without verification
+    /// Parse header from raw header data without verification.
+    ///
+    /// # Safety
+    ///
+    /// Caller is acknowledged to skip hash check
     pub unsafe fn new_unchecked(data: &[u8]) -> Result<&Header, Error> {
         Ok(bytemuck::try_from_bytes(data)?)
     }
@@ -93,6 +97,9 @@ impl Header {
     }
 
     /// Parse entries from raw entries data without verification
+    ///
+    /// # Safety
+    /// Caller is acknowledged to skip hash check
     pub unsafe fn entries_unchecked(data: &[u8]) -> Result<&[Entry], Error> {
         Ok(bytemuck::try_cast_slice(data)?)
     }

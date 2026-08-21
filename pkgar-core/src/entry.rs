@@ -1,6 +1,7 @@
 //! The packed structs represent the on-disk format of pkgar
 use core::fmt::Display;
 
+use alloc::boxed::Box;
 use blake3::Hash;
 use bytemuck::{Pod, Zeroable};
 
@@ -42,7 +43,7 @@ impl Entry {
         let len = core::cmp::min(path_bytes.len() - 1, path.len());
         path_bytes[..len].copy_from_slice(&path[..len]);
         if len != path.len() {
-            return Err(Error::OverflowPath(path_bytes));
+            return Err(Error::OverflowPath(Box::new(path_bytes)));
         }
 
         Ok(Self {
