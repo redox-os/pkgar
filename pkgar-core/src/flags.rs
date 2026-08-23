@@ -33,14 +33,14 @@ pub enum Packaging {
     Reserved(u8),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C, packed)]
 pub struct HeaderFlags(pub u32);
 
 impl HeaderFlags {
     pub fn new(version: DataVersion, arch: Architecture, pkg: Packaging) -> Self {
         let mut bits = 0u32;
-        bits |= (Self::val_version(version) as u32) << 0;
+        bits |= Self::val_version(version) as u32;
         bits |= (Self::val_arch(arch) as u32) << 8;
         bits |= (Self::val_pkg(pkg) as u32) << 16;
         Self(bits)
@@ -51,7 +51,7 @@ impl HeaderFlags {
     }
 
     pub fn version(&self) -> DataVersion {
-        match (self.0 >> 0) as u8 {
+        match self.0 as u8 {
             0 => DataVersion::V0,
             v => DataVersion::Reserved(v),
         }
@@ -105,21 +105,15 @@ impl HeaderFlags {
     }
 }
 
-impl Default for HeaderFlags {
-    fn default() -> Self {
-        Self(0)
-    }
-}
-
 impl From<u32> for HeaderFlags {
     fn from(value: u32) -> Self {
         Self(value)
     }
 }
 
-impl Into<u32> for HeaderFlags {
-    fn into(self) -> u32 {
-        self.0
+impl From<HeaderFlags> for u32 {
+    fn from(val: HeaderFlags) -> Self {
+        val.0
     }
 }
 

@@ -71,7 +71,7 @@ impl PackageSrc for PackageHead {
         offset: u64,
         buf: &mut [u8],
     ) -> Result<usize, Self::Err> {
-        let end = Self::calculate_end(&entry, offset, &buf)?;
+        let end = Self::calculate_end(&entry, offset, buf)?;
 
         if end == 0 {
             return Ok(0);
@@ -85,7 +85,7 @@ impl PackageSrc for PackageHead {
             .map_err(wrap_io_err!(entry_path.clone(), "Open entry"))?;
 
         entry_file
-            .seek(SeekFrom::Start(offset as u64))
+            .seek(SeekFrom::Start(offset))
             .map_err(wrap_io_err!(entry_path.clone(), "Seek entry"))?;
 
         entry_file
