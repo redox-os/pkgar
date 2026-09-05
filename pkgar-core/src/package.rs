@@ -37,7 +37,7 @@ pub trait PackageSrc {
     /// Read from this src at a given entry's data with a given offset within that entry
     fn read_entry(
         &mut self,
-        entry: Entry,
+        entry: &Entry,
         offset: u64,
         buf: &mut [u8],
     ) -> Result<usize, Self::Err> {
