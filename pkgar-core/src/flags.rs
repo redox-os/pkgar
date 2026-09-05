@@ -142,4 +142,13 @@ impl Architecture {
             _ => None,
         }
     }
+
+    /// Get the next architecture of this flag, if available
+    pub fn next_architecture(&self) -> Option<Architecture> {
+        match self {
+            Architecture::X86_64 => Some(Architecture::X86_64v3),
+            Architecture::AArch64 => Some(Architecture::AArch64v8_2),
+            _ => None,
+        }
+    }
 }
