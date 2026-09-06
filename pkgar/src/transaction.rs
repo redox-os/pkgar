@@ -26,20 +26,18 @@ fn temp_path(target_path: impl AsRef<Path>, entry_hash: Hash) -> Result<PathBuf,
     if !dir.is_dir() {
         fs::create_dir_all(dir).map_err(wrap_io_err!(dir.to_path_buf(), "Creating dir"))?;
     }
-    let tmp_path = dir.join(".pkgar").with_added_extension(base);
-    if !tmp_path.exists() {
-        return Ok(tmp_path);
-    }
 
-    let hash_path = tmp_path.with_added_extension(entry_hash.to_hex().as_str());
-    // TODO: what if this is a directory?
-    if hash_path.is_file() {
-        // Definitely not a personal file, safe to skip hash comparison.
-        fs::remove_file(&hash_path)
-            .map_err(wrap_io_err!(dir.to_path_buf(), "Removing old temp file"))?;
-    }
+    let tmp_path = dir
+        .join(".pkgar")
+        .with_added_extension(base)
+        .with_added_extension(entry_hash.to_hex().as_str());
 
-    Ok(hash_path)
+    match std::fs::remove_file(&tmp_path) {
+        Ok(_) => {}
+        Err(ref e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(wrap_io_err!(dir.to_path_buf(), "Removing old temp file")(e)),
+    }
+    Ok(tmp_path)
 }
 
 /// Individual atomic file operation
