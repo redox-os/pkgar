@@ -8,14 +8,14 @@ use std::fmt;
 #[derive(Debug)]
 pub enum Error {
     Pkgar(Box<pkgar::Error>),
-    Reqwest(reqwest::Error),
+    Ureq(ureq::Error),
 }
 
 impl error::Error for Error {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match self {
             Self::Pkgar(e) => Some(e),
-            Self::Reqwest(e) => Some(e),
+            Self::Ureq(e) => Some(e),
         }
     }
 }
@@ -24,7 +24,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Pkgar(e) => write!(f, "{e}"),
-            Self::Reqwest(e) => write!(f, "{e}"),
+            Self::Ureq(e) => write!(f, "{e}"),
         }
     }
 }
@@ -51,8 +51,8 @@ impl From<pkgar_core::Error> for Error {
     }
 }
 
-impl From<reqwest::Error> for Error {
-    fn from(other: reqwest::Error) -> Self {
-        Self::Reqwest(other)
+impl From<ureq::Error> for Error {
+    fn from(other: ureq::Error) -> Self {
+        Self::Ureq(other)
     }
 }
