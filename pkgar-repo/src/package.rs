@@ -4,14 +4,14 @@ use std::{convert::TryFrom, io::Read};
 use crate::Error;
 
 pub struct PackageUrl<'a> {
-    client: &'a reqwest::blocking::Client,
+    client: &'a ureq::Agent,
     url: String,
     header: Header,
 }
 
 impl<'a> PackageUrl<'a> {
     pub fn new(
-        client: &'a reqwest::blocking::Client,
+        client: &'a ureq::Agent,
         url: String,
         public_key: &PublicKey,
     ) -> Result<Self, Error> {
@@ -51,14 +51,13 @@ impl PackageSrc for PackageUrl<'_> {
 
         let range = format!("bytes={}-{}", offset, end_offset);
         eprint!("Request {} from {}", range, self.url);
-        let mut response = self
-            .client
-            .get(&self.url)
-            .header(reqwest::header::RANGE, range)
-            .send()?
-            .error_for_status()?;
+
+        let mut response = self.client.get(&self.url).header("Range", &range).call()?;
+
         eprintln!(" = {:?}", response.status());
-        response.read_exact(buf)?;
+
+        response.body_mut().as_reader().read_exact(buf)?;
+
         Ok(buf.len())
     }
 }
