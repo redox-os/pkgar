@@ -11,16 +11,16 @@ use std::{path::PathBuf, sync::LazyLock};
 
 use hex::FromHex;
 use pkgar_core::{
+    PublicKey, SecretKey,
     dryoc::{
         classic::{
-            crypto_pwhash::{crypto_pwhash, PasswordHashAlgorithm},
-            crypto_secretbox::{crypto_secretbox_easy, crypto_secretbox_open_easy, Key, Nonce},
+            crypto_pwhash::{PasswordHashAlgorithm, crypto_pwhash},
+            crypto_secretbox::{Key, Nonce, crypto_secretbox_easy, crypto_secretbox_open_easy},
             crypto_sign::{crypto_sign_keypair, crypto_sign_seed_keypair},
         },
         constants::{CRYPTO_PWHASH_MEMLIMIT_INTERACTIVE, CRYPTO_PWHASH_OPSLIMIT_INTERACTIVE},
         types::NewByteArray,
     },
-    PublicKey, SecretKey,
 };
 use seckey::SecBytes;
 use serde::{Deserialize, Serialize};
@@ -246,8 +246,8 @@ impl SecretKeyFile {
 
         let pkey_file = PublicKeyFile { pkey };
         let skey_file = SecretKeyFile {
-            salt: Salt::gen(),
-            nonce: Nonce::gen(),
+            salt: Salt::r#gen(),
+            nonce: Nonce::r#gen(),
             skey: SKey::Plain(skey),
         };
 

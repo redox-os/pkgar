@@ -6,7 +6,7 @@ use std::process;
 use clap::clap_app;
 
 use pkgar_keys::{
-    gen_keypair, get_skey, re_encrypt, Error, SecretKeyFile, DEFAULT_PUBKEY, DEFAULT_SECKEY,
+    DEFAULT_PUBKEY, DEFAULT_SECKEY, Error, SecretKeyFile, gen_keypair, get_skey, re_encrypt,
 };
 
 fn cli() -> Result<i32, Error> {
