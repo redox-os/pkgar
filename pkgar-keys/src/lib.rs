@@ -246,8 +246,8 @@ impl SecretKeyFile {
 
         let pkey_file = PublicKeyFile { pkey };
         let skey_file = SecretKeyFile {
-            salt: Salt::r#gen(),
-            nonce: Nonce::r#gen(),
+            salt: Salt::generate(),
+            nonce: Nonce::generate(),
             skey: SKey::Plain(skey),
         };
 

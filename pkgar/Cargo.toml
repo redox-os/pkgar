@@ -14,7 +14,7 @@ required-features = ["cli"]
 [dependencies]
 bytemuck = {version = "1", features = ["derive"]}
 clap = { version = "4", optional = true, features = ["cargo"] }
-lzma-rust2 = "0.16.2"
+lzma-rust2 = "0.20"
 pkgar-core = { path = "../pkgar-core", version = "0.2.3" }
 pkgar-keys = { path = "../pkgar-keys", version = "0.2.3" }
 thiserror = "2"
