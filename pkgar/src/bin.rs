@@ -4,12 +4,14 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
+#[cfg(not(feature = "repo"))]
+use crate::package::PackageFile;
 use pkgar_core::{Entry, Header, Mode, dryoc::classic::crypto_sign::crypto_sign_detached};
 use pkgar_core::{HeaderFlags, PackageSrc, PublicKey, SecretKey};
+#[cfg(not(feature = "repo"))]
 use pkgar_keys::PublicKeyFile;
 
 use crate::ext::{DataWriter, EntryExt, copy_and_hash};
-use crate::package::PackageFile;
 #[cfg(feature = "repo")]
 use crate::repo::{open_or_download_pkgar, open_or_download_pubkey};
 use crate::transaction::Transaction;
@@ -257,15 +259,28 @@ fn create_with_entries(
     Ok(())
 }
 
+macro_rules! init_package {
+    ($pkey_path:expr, $archive_path:expr) => {{
+        #[cfg(feature = "repo")]
+        let pkey = open_or_download_pubkey($pkey_path)?;
+        #[cfg(not(feature = "repo"))]
+        let pkey = PublicKeyFile::open($pkey_path)?.pkey;
+        #[cfg(feature = "repo")]
+        let package = open_or_download_pkgar($archive_path, &pkey)?;
+        #[cfg(not(feature = "repo"))]
+        let package = PackageFile::new($archive_path, &pkey)?;
+
+        (pkey, package)
+    }};
+}
+
 /// Extract a pkgar file to a directory
 pub fn extract(
     pkey_path: impl AsRef<Path>,
     archive_path: impl AsRef<Path>,
     base_dir: impl AsRef<Path>,
 ) -> Result<(), Error> {
-    let pkey = PublicKeyFile::open(pkey_path.as_ref())?.pkey;
-
-    let mut package = PackageFile::new(archive_path, &pkey)?;
+    let (_, mut package) = init_package!(&pkey_path, &archive_path);
 
     Transaction::install(&mut package, base_dir)?.commit()?;
 
@@ -280,11 +295,8 @@ pub fn replace(
     archive_path: impl AsRef<Path>,
     base_dir: impl AsRef<Path>,
 ) -> Result<(), Error> {
-    let pkey = PublicKeyFile::open(pkey_path.as_ref())?.pkey;
-    let old_pkey = PublicKeyFile::open(old_pkey_path.as_ref())?.pkey;
-
-    let mut new_package = PackageFile::new(archive_path, &pkey)?;
-    let mut old_package = PackageFile::new(old_head_path, &old_pkey)?;
+    let (_, mut old_package) = init_package!(&old_pkey_path, &old_head_path);
+    let (_, mut new_package) = init_package!(&pkey_path, &archive_path);
 
     Transaction::replace(&mut old_package, &mut new_package, base_dir)?.commit()?;
 
@@ -297,9 +309,7 @@ pub fn remove(
     archive_path: impl AsRef<Path>,
     base_dir: impl AsRef<Path>,
 ) -> Result<(), Error> {
-    let pkey = PublicKeyFile::open(pkey_path.as_ref())?.pkey;
-
-    let mut package = PackageFile::new(archive_path, &pkey)?;
+    let (_, mut package) = init_package!(&pkey_path, &archive_path);
 
     Transaction::remove(&mut package, base_dir)?.commit()?;
 
@@ -308,14 +318,8 @@ pub fn remove(
 
 /// Print a pkgar file entries path
 pub fn list(pkey_path: impl AsRef<Path>, archive_path: impl AsRef<Path>) -> Result<(), Error> {
-    #[cfg(feature = "repo")]
-    let pkey = open_or_download_pubkey(pkey_path)?;
-    #[cfg(feature = "repo")]
-    let mut package = open_or_download_pkgar(archive_path, &pkey)?;
-    #[cfg(not(feature = "repo"))]
-    let pkey = PublicKeyFile::open(pkey_path.as_ref())?.pkey;
-    #[cfg(not(feature = "repo"))]
-    let mut package = PackageFile::new(archive_path, &pkey)?;
+    let (_, mut package) = init_package!(&pkey_path, &archive_path);
+
     for entry in package.read_entries()? {
         let relative = entry.check_path()?;
         println!("{}", relative.display());
@@ -331,10 +335,8 @@ pub fn split(
     head_path: impl AsRef<Path>,
     data_path_opt: Option<impl AsRef<Path>>,
 ) -> Result<(), Error> {
-    let archive_path = archive_path.as_ref();
+    let (_, mut package) = init_package!(&pkey_path, &archive_path);
 
-    let pkey = PublicKeyFile::open(pkey_path.as_ref())?.pkey;
-    let mut package = PackageFile::new(archive_path, &pkey)?;
     package.split(head_path, data_path_opt)
 }
 
@@ -344,13 +346,7 @@ pub fn verify(
     archive_path: impl AsRef<Path>,
     base_dir: impl AsRef<Path>,
 ) -> Result<(), Error> {
-    #[cfg(feature = "repo")]
-    let pkey = open_or_download_pubkey(pkey_path)?;
-    #[cfg(feature = "repo")]
-    let mut package = open_or_download_pkgar(&archive_path, &pkey)?;
-    #[cfg(not(feature = "repo"))]
-    let pkey = PublicKeyFile::open(pkey_path)?.pkey;
-    #[cfg(not(feature = "repo"))]
-    let mut package = PackageFile::new(&archive_path, &pkey)?;
+    let (_, mut package) = init_package!(&pkey_path, &archive_path);
+
     package.verify(base_dir)
 }

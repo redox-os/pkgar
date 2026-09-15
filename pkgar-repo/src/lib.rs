@@ -3,6 +3,7 @@ pub use self::package::*;
 pub use self::reader::*;
 use std::error::Error as StdError;
 
+mod cursor;
 mod key;
 mod package;
 mod reader;

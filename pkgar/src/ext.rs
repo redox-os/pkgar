@@ -167,6 +167,14 @@ pub struct DataReader<R> {
     pub inner: DataReaderKind<R>,
 }
 
+impl<R: Read + Seek> DataReader<R> {
+    pub fn packaging_type(&self) -> pkgar_core::Packaging {
+        match self.inner {
+            DataReaderKind::Uncompressed(_) => Packaging::Uncompressed,
+            DataReaderKind::LZMA2(_) => Packaging::LZMA2,
+        }
+    }
+}
 #[expect(clippy::large_enum_variant, reason = "too short-lived to use heap")]
 pub enum DataReaderKind<R> {
     Uncompressed(Take<R>),

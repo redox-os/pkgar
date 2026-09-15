@@ -25,3 +25,4 @@ sh-test:
     - cargo test --locked --all-features
     - ./test.sh
     - ./test.sh -c
+    - ./test.sh -r

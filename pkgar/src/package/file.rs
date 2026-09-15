@@ -42,10 +42,24 @@ impl PackageFile {
         head_path: impl AsRef<Path>,
         data_path_opt: Option<impl AsRef<Path>>,
     ) -> Result<(), Error> {
-        let head_path = head_path.as_ref();
         let data_offset = self.header().total_size()? as u64;
         let mut src = self.take_reader()?;
 
+        src = Self::split_inner(data_path_opt, head_path, data_offset, src)?;
+
+        self.restore_reader(src)
+    }
+
+    pub(crate) fn split_inner<R>(
+        data_path_opt: Option<impl AsRef<Path>>,
+        head_path: impl AsRef<Path>,
+        data_offset: u64,
+        mut src: R,
+    ) -> Result<R, Error>
+    where
+        R: Read + Seek,
+    {
+        let head_path = head_path.as_ref();
         if let Some(data_path) = data_path_opt {
             let data_path = data_path.as_ref();
             let mut data_file =
@@ -63,10 +77,8 @@ impl PackageFile {
             let mut src_taken = src.take(data_offset);
             std::io::copy(&mut src_taken, &mut head_file)
                 .map_err(wrap_io_err!(head_path, "Writing head"))?;
-            self.restore_reader(src_taken.into_inner())?;
+            Ok(src_taken.into_inner())
         }
-
-        Ok(())
     }
 
     pub fn verify(&mut self, base_dir: impl AsRef<Path>) -> Result<(), Error> {
@@ -77,8 +89,7 @@ impl PackageFile {
 
         pkg_file = Self::verify_inner(&self.path, base_dir, entries, pkg_file, header)?;
 
-        self.restore_reader(pkg_file)?;
-        Ok(())
+        self.restore_reader(pkg_file)
     }
 
     pub(crate) fn verify_inner<R>(
