@@ -5,7 +5,7 @@ use core::convert::TryFrom;
 
 use dryoc::classic::crypto_sign_ed25519::PublicKey;
 
-use crate::{Entry, Error, Header, HEADER_SIZE};
+use crate::{Entry, Error, HEADER_SIZE, Header};
 
 pub trait PackageSrc {
     type Err: From<Error>;

@@ -76,7 +76,7 @@ impl Mode {
 mod tests {
     use core::mem;
 
-    use crate::{Entry, Header, ENTRY_SIZE, HEADER_SIZE};
+    use crate::{ENTRY_SIZE, Entry, HEADER_SIZE, Header};
 
     #[test]
     fn header_size() {
