@@ -11,11 +11,11 @@ use pkgar_core::{HeaderFlags, PackageSrc, PublicKey, SecretKey};
 #[cfg(not(feature = "repo"))]
 use pkgar_keys::PublicKeyFile;
 
-use crate::ext::{DataWriter, EntryExt, copy_and_hash};
+use crate::ext::{DataWriter, EntryExt, PackageSrcExt, copy_and_hash};
 #[cfg(feature = "repo")]
 use crate::repo::{open_or_download_pkgar, open_or_download_pubkey};
 use crate::transaction::Transaction;
-use crate::{Error, wrap_io_err};
+use crate::{Error, READ_WRITE_HASH_BUF_SIZE, wrap_io_err};
 
 /// Iterate a directory and return its entries
 pub fn folder_entries<P>(base: P) -> Result<Vec<Entry>, Error>
@@ -316,14 +316,173 @@ pub fn remove(
     Ok(())
 }
 
-/// Print a pkgar file entries path
-pub fn list(pkey_path: impl AsRef<Path>, archive_path: impl AsRef<Path>) -> Result<(), Error> {
+/// Extract a portion of pkgar file to a directory
+pub fn extract_with_subpath(
+    pkey_path: impl AsRef<Path>,
+    archive_path: impl AsRef<Path>,
+    base_dir: impl AsRef<Path>,
+    subpath: impl AsRef<Path>,
+    strip: bool,
+) -> Result<(), Error> {
+    let (_, mut package) = init_package!(&pkey_path, &archive_path);
+    let entries = filter_entries(subpath, strip, &mut package)?;
+
+    let mut transaction = Transaction::new();
+    transaction.install_with_entries(&mut package, &entries, base_dir, true)?;
+    transaction.commit()?;
+
+    Ok(())
+}
+
+/// Update a directory from a pkgar file
+pub fn replace_with_subpath(
+    old_pkey_path: impl AsRef<Path>,
+    pkey_path: impl AsRef<Path>,
+    old_head_path: impl AsRef<Path>,
+    archive_path: impl AsRef<Path>,
+    base_dir: impl AsRef<Path>,
+    subpath: impl AsRef<Path>,
+    strip: bool,
+) -> Result<(), Error> {
+    let (_, mut old_package) = init_package!(&old_pkey_path, &old_head_path);
+    let (_, mut new_package) = init_package!(&pkey_path, &archive_path);
+    let old_entries = filter_entries(subpath.as_ref(), strip, &mut old_package)?;
+    let new_entries = filter_entries(subpath.as_ref(), strip, &mut new_package)?;
+
+    let mut transaction = Transaction::new();
+    transaction.replace_with_entries(
+        &old_entries,
+        &new_entries,
+        Some(&old_package),
+        &mut new_package,
+        base_dir,
+        false,
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
+/// Remove a portion of directory entries from a pkgar file
+pub fn remove_with_subpath(
+    pkey_path: impl AsRef<Path>,
+    archive_path: impl AsRef<Path>,
+    base_dir: impl AsRef<Path>,
+    subpath: impl AsRef<Path>,
+    strip: bool,
+) -> Result<(), Error> {
+    let (_, mut package) = init_package!(&pkey_path, &archive_path);
+    let entries = filter_entries(subpath, strip, &mut package)?;
+
+    let mut transaction = Transaction::new();
+    transaction.remove_with_entries(Some(&mut package), &entries, base_dir, true)?;
+    transaction.commit()?;
+
+    Ok(())
+}
+pub fn list(
+    pkey_path: impl AsRef<Path>,
+    archive_path: impl AsRef<Path>,
+    subpath: Option<impl AsRef<Path>>,
+    format: Option<&str>,
+) -> Result<(), Error> {
     let (_, mut package) = init_package!(&pkey_path, &archive_path);
 
+    let tabs: Vec<_> = format.unwrap_or("path").split(',').collect();
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    let mut max_widths = vec![4; tabs.len()];
+
     for entry in package.read_entries()? {
+        if let Some(subpath) = subpath.as_ref()
+            && entry.sub_path(subpath.as_ref()).is_none()
+        {
+            continue;
+        }
         let relative = entry.check_path()?;
-        println!("{}", relative.display());
+        let mut row = Vec::with_capacity(tabs.len());
+
+        for (i, tab) in tabs.iter().enumerate() {
+            let cell = match *tab {
+                "path" => relative.display().to_string(),
+                "name" => {
+                    let name = relative.file_name().unwrap_or_default();
+                    Path::new(name).display().to_string()
+                }
+                "size" => {
+                    let size = entry.size;
+                    size.to_string()
+                }
+                "offset" => {
+                    let offset = entry.offset;
+                    offset.to_string()
+                }
+                "mode" => {
+                    let mode = entry.mode;
+                    format!("{:o}", mode)
+                }
+                _ => String::new(),
+            };
+
+            max_widths[i] = max_widths[i].max(cell.len());
+            row.push(cell);
+        }
+        rows.push(row);
     }
+
+    // TODO: option for no header
+    {
+        for (i, cell) in tabs.iter().enumerate() {
+            if i == tabs.len() - 1 {
+                print!("{}", cell);
+            } else {
+                print!("{:<width$}  ", cell, width = max_widths[i]);
+            }
+        }
+        println!();
+    }
+
+    for row in rows {
+        for (i, cell) in row.iter().enumerate() {
+            if i == tabs.len() - 1 {
+                print!("{}", cell);
+            } else {
+                print!("{:<width$}  ", cell, width = max_widths[i]);
+            }
+        }
+        println!();
+    }
+
+    Ok(())
+}
+
+/// Print a pkgar file content
+pub fn cat(
+    pkey_path: impl AsRef<Path>,
+    archive_path: impl AsRef<Path>,
+    path: impl AsRef<Path>,
+) -> Result<(), Error> {
+    let (_, mut package) = init_package!(&pkey_path, &archive_path);
+    let path = path.as_ref();
+
+    let entries = package.read_entries()?;
+    let Some(entry) = entries
+        .into_iter()
+        .find(|s| s.check_path().is_ok_and(|s| s == path))
+    else {
+        return Err(Error::Io {
+            source: std::io::Error::from(std::io::ErrorKind::NotFound),
+            path: Some(path.to_path_buf()),
+            context: "Entry not found",
+        });
+    };
+
+    let mut reader = package.data_reader(&entry)?;
+    copy_and_hash(
+        &mut reader,
+        &mut std::io::stdout(),
+        &mut vec![0; READ_WRITE_HASH_BUF_SIZE],
+    )
+    .map_err(wrap_io_err!(archive_path.as_ref(), "Writing to stdout"))?;
+    reader.finish(&mut package)?;
 
     Ok(())
 }
@@ -349,4 +508,25 @@ pub fn verify(
     let (_, mut package) = init_package!(&pkey_path, &archive_path);
 
     package.verify(base_dir)
+}
+
+fn filter_entries(
+    subpath: impl AsRef<Path>,
+    strip: bool,
+    package: &mut impl PackageSrc<Err = Error>,
+) -> Result<Vec<Entry>, Error> {
+    let entries = package.read_entries()?;
+    let subpath = subpath.as_ref();
+    let entries: Vec<_> = if strip {
+        entries
+            .into_iter()
+            .filter_map(|s| s.sub_path(subpath))
+            .collect()
+    } else {
+        entries
+            .into_iter()
+            .filter(|s| s.sub_path(subpath).is_some())
+            .collect()
+    };
+    Ok(entries)
 }

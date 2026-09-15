@@ -21,7 +21,9 @@ sh-test:
   image: "rust:latest"
   stage: test
   script:
-    - cargo test --locked
+    - cargo build --locked
+    - cargo build --locked --features=cli
+    - cargo build --locked --features=repo
     - cargo test --locked --all-features
     - ./test.sh
     - ./test.sh -c
