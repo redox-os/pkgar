@@ -1,7 +1,6 @@
 use pkgar_core::{Header, PackageSrc, PublicKey, Zeroable};
-use std::{convert::TryFrom, io::Read};
 
-use crate::Error;
+use crate::{Error, reader::PackageUrlReader};
 
 pub struct PackageUrl<'a> {
     client: &'a ureq::Agent,
@@ -25,6 +24,14 @@ impl<'a> PackageUrl<'a> {
         new.header = new.read_header(public_key)?;
         Ok(new)
     }
+
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+
+    pub fn get_reader(&self) -> PackageUrlReader<'a> {
+        PackageUrlReader::new(self.client, &self.url)
+    }
 }
 
 impl PackageSrc for PackageUrl<'_> {
@@ -35,29 +42,6 @@ impl PackageSrc for PackageUrl<'_> {
     }
 
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Err> {
-        if buf.is_empty() {
-            return Ok(0);
-        }
-        let end_offset = offset
-            .checked_add(
-                u64::try_from(
-                    buf.len()
-                        .checked_sub(1)
-                        .ok_or(pkgar_core::Error::Overflow)?,
-                )
-                .map_err(pkgar_core::Error::TryFromInt)?,
-            )
-            .ok_or(pkgar_core::Error::Overflow)?;
-
-        let range = format!("bytes={}-{}", offset, end_offset);
-        eprint!("Request {} from {}", range, self.url);
-
-        let mut response = self.client.get(&self.url).header("Range", &range).call()?;
-
-        eprintln!(" = {:?}", response.status());
-
-        response.body_mut().as_reader().read_exact(buf)?;
-
-        Ok(buf.len())
+        PackageUrlReader::new(self.client, &self.url).read_at(offset, buf)
     }
 }

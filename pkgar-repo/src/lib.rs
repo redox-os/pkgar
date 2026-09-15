@@ -1,58 +1,54 @@
+pub use self::key::*;
 pub use self::package::*;
+pub use self::reader::*;
+use std::error::Error as StdError;
 
+mod key;
 mod package;
+mod reader;
 
-use std::error;
+pub use ureq::Agent;
+
 use std::fmt;
+use std::time::Duration;
 
-#[derive(Debug)]
+/// Whether a path is HTTP(S), which pkgar_repo can have support with
+pub fn is_remote(path: &str) -> bool {
+    path.starts_with("http://") || path.starts_with("https://")
+}
+
+/// Create a new HTTP client with good default configuration.
+pub fn new_client() -> ureq::Agent {
+    let config = ureq::Agent::config_builder()
+        .timeout_connect(Some(Duration::from_secs(5)))
+        .build();
+    ureq::Agent::new_with_config(config)
+}
+
+#[derive(thiserror::Error)]
 pub enum Error {
-    Pkgar(Box<pkgar::Error>),
-    Ureq(ureq::Error),
+    #[error(transparent)]
+    Core(#[from] pkgar_core::Error),
+    #[error(transparent)]
+    Key(#[from] pkgar_keys::Error),
+    #[error(transparent)]
+    Ureq(#[from] ureq::Error),
 }
 
-impl error::Error for Error {
-    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
-        match self {
-            Self::Pkgar(e) => Some(e),
-            Self::Ureq(e) => Some(e),
-        }
-    }
-}
-
-impl fmt::Display for Error {
+impl fmt::Debug for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Pkgar(e) => write!(f, "{e}"),
-            Self::Ureq(e) => write!(f, "{e}"),
+        writeln!(f, "{self}")?;
+
+        let mut source = self.source();
+        while let Some(err) = source {
+            writeln!(f, "\tCaused by: {err}")?;
+            source = err.source();
         }
-    }
-}
 
-impl From<std::io::Error> for Error {
-    fn from(source: std::io::Error) -> Self {
-        Self::Pkgar(Box::new(pkgar::Error::Io {
-            source,
-            path: None,
-            context: "Generic Err",
-        }))
-    }
-}
+        // if let Some(backtrace) = self.backtrace() {
+        //     write!(f, "{backtrace:?}")?;
+        // }
 
-impl From<pkgar::Error> for Error {
-    fn from(other: pkgar::Error) -> Self {
-        Self::Pkgar(Box::new(other))
-    }
-}
-
-impl From<pkgar_core::Error> for Error {
-    fn from(other: pkgar_core::Error) -> Self {
-        Self::Pkgar(Box::new(other.into()))
-    }
-}
-
-impl From<ureq::Error> for Error {
-    fn from(other: ureq::Error) -> Self {
-        Self::Ureq(other)
+        Ok(())
     }
 }
