@@ -75,6 +75,22 @@ impl PackageFile {
         let mut pkg_file = self.take_reader()?;
         let header = self.header();
 
+        pkg_file = Self::verify_inner(&self.path, base_dir, entries, pkg_file, header)?;
+
+        self.restore_reader(pkg_file)?;
+        Ok(())
+    }
+
+    pub(crate) fn verify_inner<R>(
+        pkg_path: &Path,
+        base_dir: &Path,
+        entries: Vec<pkgar_core::Entry>,
+        mut pkg_file: R,
+        header: Header,
+    ) -> Result<R, Error>
+    where
+        R: Read + Seek,
+    {
         let mut buf = vec![0; READ_WRITE_HASH_BUF_SIZE];
         for entry in entries {
             let expected_path = base_dir.join(entry.check_path()?);
@@ -86,14 +102,12 @@ impl PackageFile {
                 .map_err(wrap_io_err!(expected_path, "Writing file to to black hole"))?;
 
             let reader = DataReader::new_with_seek(&header, pkg_file, &entry)
-                .map_err(wrap_io_err!(self.path, "Reading pkg data"))?;
+                .map_err(wrap_io_err!(pkg_path, "Reading pkg data"))?;
             entry.verify(hash, count, &reader)?;
             pkg_file = reader.into_inner();
         }
 
-        self.restore_reader(pkg_file)?;
-
-        Ok(())
+        Ok(pkg_file)
     }
 }
 

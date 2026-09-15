@@ -17,6 +17,7 @@ clap = { version = "4", optional = true, features = ["cargo"] }
 lzma-rust2 = "0.20"
 pkgar-core = { path = "../pkgar-core", version = "0.2.3" }
 pkgar-keys = { path = "../pkgar-keys", version = "0.2.3" }
+pkgar-repo = { path = "../pkgar-repo", version = "0.2.3", optional = true }
 thiserror = "2"
 
 [dependencies.blake3]
@@ -31,5 +32,6 @@ tempfile = "3.1.0"
 [features]
 default = ["std", "cli"]
 cli = ["clap", "std", "pkgar-keys/cli"]
+repo = ["pkgar-repo"]
 # TODO: not used, remove
 std = []

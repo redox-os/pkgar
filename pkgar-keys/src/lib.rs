@@ -94,7 +94,7 @@ impl PublicKeyFile {
             path: None,
             context: "Reading public key",
         })?;
-        toml::from_str(&content).map_err(Error::Deser)
+        Self::from_str(&content)
     }
 
     /// Get a public key from pkgar header
@@ -102,6 +102,11 @@ impl PublicKeyFile {
         Self {
             pkey: header.public_key,
         }
+    }
+
+    /// Get a public key from toml content
+    pub fn from_str(toml_str: &str) -> Result<Self, Error> {
+        toml::from_str(&toml_str).map_err(Error::Deser)
     }
 
     /// Get a public key from path to pkgar header.
@@ -255,13 +260,18 @@ impl SecretKeyFile {
     }
 
     /// Parse a `SecretKeyFile` from `file` (in toml format).
-    pub fn open(file: impl AsRef<Path>) -> Result<SecretKeyFile, Error> {
+    pub fn open(file: impl AsRef<Path>) -> Result<Self, Error> {
         let content = fs::read_to_string(&file).map_err(|source| Error::Io {
             source,
             path: Some(file.as_ref().to_path_buf()),
             context: "Reading secret",
         })?;
-        toml::from_str(&content).map_err(Error::Deser)
+        Self::from_str(&content)
+    }
+
+    /// Parse a `SecretKeyFile` from toml content
+    pub fn from_str(toml_str: &str) -> Result<Self, Error> {
+        toml::from_str(&toml_str).map_err(Error::Deser)
     }
 
     /// Write `self` serialized as toml to `w`.

@@ -595,6 +595,7 @@ dependencies = [
  "lzma-rust2",
  "pkgar-core",
  "pkgar-keys",
+ "pkgar-repo",
  "tempfile",
  "thiserror",
 ]
@@ -628,8 +629,9 @@ dependencies = [
 name = "pkgar-repo"
 version = "0.2.3"
 dependencies = [
- "pkgar",
  "pkgar-core",
+ "pkgar-keys",
+ "thiserror",
  "ureq",
 ]
 

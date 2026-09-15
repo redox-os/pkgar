@@ -1,6 +1,8 @@
 mod bin;
 pub mod ext;
 mod package;
+#[cfg(feature = "repo")]
+pub(crate) mod repo;
 mod transaction;
 
 pub use bin::*;
@@ -20,6 +22,9 @@ pub enum Error {
     Core(#[from] pkgar_core::Error),
     #[error(transparent)]
     Keys(#[from] pkgar_keys::Error),
+    #[error(transparent)]
+    #[cfg(feature = "repo")]
+    Repo(#[from] pkgar_repo::Error),
     #[error("{source} ({path:?}) {context:?}")]
     Io {
         #[source]

@@ -8,6 +8,7 @@ repository = "https://gitlab.redox-os.org/redox-os/pkgar"
 edition.workspace = true
 
 [dependencies]
-pkgar = { path = "../pkgar", version = "0.2.3" }
+pkgar-keys = { path = "../pkgar-keys", version = "0.2.3" }
 pkgar-core = { path = "../pkgar-core", version = "0.2.3" }
 ureq = { version = "3.4", default-features = false, features = ["rustls"] }
+thiserror = "2"
