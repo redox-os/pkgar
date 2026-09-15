@@ -1,77 +1,67 @@
-//TODO: update clap to remove the need for this
-#![allow(dangerous_implicit_autorefs)]
-
-use clap::{
-    crate_authors, crate_description, crate_name, crate_version, App, AppSettings, Arg, SubCommand,
-};
+use clap::{crate_authors, crate_description, crate_name, crate_version};
+use clap::{Arg, ArgAction, Command};
 use pkgar::{create_with_flags, extract, list, remove, replace, split, verify, Error};
 use pkgar_keys::{DEFAULT_PUBKEY, DEFAULT_SECKEY};
 
 fn cli() -> Result<(), Error> {
-    let (default_pkey, default_skey) = (
-        DEFAULT_PUBKEY.to_string_lossy(),
-        DEFAULT_SECKEY.to_string_lossy(),
-    );
+    let (default_pkey, default_skey) = (DEFAULT_PUBKEY.as_os_str(), DEFAULT_SECKEY.as_os_str());
 
-    let help_pkey = format!("Public key file (defaults to '{}')", &default_pkey);
-    let help_skey = format!("Secret key file (defaults to '{}')", &default_skey);
+    let help_pkey = format!("Public key file (defaults to '{}')", default_pkey.display());
+    let help_skey = format!("Secret key file (defaults to '{}')", default_skey.display());
 
-    let arg_pkey = Arg::with_name("pkey")
-        .help(&help_pkey)
-        .short("p")
+    let arg_pkey = Arg::new("pkey")
+        .help(help_pkey)
+        .short('p')
         .long("pkey")
         .required(true)
-        .takes_value(true)
         .value_name("FILE")
-        .default_value(&default_pkey);
+        .default_value(default_pkey);
 
-    let arg_skey = Arg::with_name("skey")
-        .help(&help_skey)
-        .short("s")
+    let arg_skey = Arg::new("skey")
+        .help(help_skey)
+        .short('s')
         .long("skey")
         .required(true)
-        .takes_value(true)
         .value_name("FILE")
-        .default_value(&default_skey);
+        .default_value(default_skey);
 
-    let arg_archive = Arg::with_name("archive")
+    let arg_archive = Arg::new("archive")
         .help("Archive file")
-        .short("a")
+        .short('a')
         .long("archive")
         .required(true)
-        .takes_value(true)
         .value_name("FILE");
 
-    let arg_old_pkey = Arg::with_name("old-pkey")
+    let arg_old_pkey = Arg::new("old-pkey")
         .help("Old Public key file (defaults to old pkey)")
         .long("old-pkey")
-        .takes_value(true)
         .value_name("FILE");
 
-    let arg_old_archive = Arg::with_name("old-archive")
+    let arg_old_archive = Arg::new("old-archive")
         .help("Old Archive file")
         .long("old-archive")
-        .takes_value(true)
         .value_name("FILE");
 
-    let arg_basedir = Arg::with_name("basedir")
+    let arg_basedir = Arg::new("basedir")
         .help("Directory to unpack to (defaults to '.')")
         .required(true)
         .value_name("DIR")
         .default_value(".");
 
-    let arg_compress = Arg::with_name("compress")
+    let arg_compress = Arg::new("compress")
         .help("Enable compression for the archive")
-        .short("c")
-        .long("compress");
+        .short('c')
+        .long("compress")
+        .action(ArgAction::SetTrue);
 
-    let matches = App::new(crate_name!())
+    let matches = Command::new(crate_name!())
         .author(crate_authors!(", "))
         .about(crate_description!())
         .version(crate_version!())
-        .setting(AppSettings::SubcommandRequiredElseHelp)
+        .subcommand_required(true)
+        .arg_required_else_help(true)
         .subcommand(
-            SubCommand::with_name("create")
+            Command::new("create")
                 .about("Create archive")
                 .arg(&arg_skey)
                 .arg(&arg_archive)
@@ -79,20 +69,20 @@ fn cli() -> Result<(), Error> {
                 .arg(&arg_compress),
         )
         .subcommand(
-            SubCommand::with_name("extract")
+            Command::new("extract")
                 .about("Extract archive")
                 .arg(&arg_pkey)
                 .arg(&arg_archive)
                 .arg(&arg_basedir),
         )
         .subcommand(
-            SubCommand::with_name("list")
+            Command::new("list")
                 .about("List archive")
                 .arg(&arg_pkey)
                 .arg(&arg_archive),
         )
         .subcommand(
-            SubCommand::with_name("replace")
+            Command::new("replace")
                 .about("Replace old archive")
                 .arg(&arg_pkey)
                 .arg(&arg_old_pkey)
@@ -101,27 +91,27 @@ fn cli() -> Result<(), Error> {
                 .arg(&arg_basedir),
         )
         .subcommand(
-            SubCommand::with_name("remove")
+            Command::new("remove")
                 .about("Unextract archive")
                 .arg(&arg_pkey)
                 .arg(&arg_archive)
                 .arg(&arg_basedir),
         )
         .subcommand(
-            SubCommand::with_name("split")
+            Command::new("split")
                 .about("Split archive into head and data files")
                 .arg(&arg_pkey)
                 .arg(&arg_archive)
                 .arg(
-                    Arg::with_name("head")
+                    Arg::new("head")
                         .help("Header file")
                         .required(true)
                         .value_name("head"),
                 )
-                .arg(Arg::with_name("data").help("Data file").value_name("data")),
+                .arg(Arg::new("data").help("Data file").value_name("data")),
         )
         .subcommand(
-            SubCommand::with_name("verify")
+            Command::new("verify")
                 .about("Verify archive")
                 .arg(&arg_pkey)
                 .arg(&arg_archive)
@@ -129,65 +119,61 @@ fn cli() -> Result<(), Error> {
         )
         .get_matches();
 
-    if let Some(matches) = matches.subcommand_matches("create") {
-        create_with_flags(
-            matches.value_of("skey").unwrap(),
-            matches.value_of("archive").unwrap(),
-            matches.value_of("basedir").unwrap(),
+    match matches.subcommand() {
+        Some(("create", sub_matches)) => create_with_flags(
+            sub_matches.get_one::<String>("skey").unwrap().as_str(),
+            sub_matches.get_one::<String>("archive").unwrap().as_str(),
+            sub_matches.get_one::<String>("basedir").unwrap().as_str(),
             pkgar_core::HeaderFlags::latest(
                 pkgar_core::Architecture::Independent,
-                match matches.is_present("compress") {
+                match sub_matches.get_flag("compress") {
                     true => pkgar_core::Packaging::LZMA2,
                     false => pkgar_core::Packaging::Uncompressed,
                 },
             ),
-        )
-    } else if let Some(matches) = matches.subcommand_matches("extract") {
-        extract(
-            matches.value_of("pkey").unwrap(),
-            matches.value_of("archive").unwrap(),
-            matches.value_of("basedir").unwrap(),
-        )
-    } else if let Some(matches) = matches.subcommand_matches("replace") {
-        let Some(old_archive) = matches.value_of("old-archive") else {
-            return Err(Error::DataNotInitialized);
-        };
-        let old_pkey = matches
-            .value_of("old-pkey")
-            .unwrap_or_else(|| matches.value_of("pkey").unwrap());
-        replace(
-            old_pkey,
-            matches.value_of("pkey").unwrap(),
-            old_archive,
-            matches.value_of("archive").unwrap(),
-            matches.value_of("basedir").unwrap(),
-        )
-    } else if let Some(matches) = matches.subcommand_matches("remove") {
-        remove(
-            matches.value_of("pkey").unwrap(),
-            matches.value_of("archive").unwrap(),
-            matches.value_of("basedir").unwrap(),
-        )
-    } else if let Some(matches) = matches.subcommand_matches("list") {
-        list(
-            matches.value_of("pkey").unwrap(),
-            matches.value_of("archive").unwrap(),
-        )
-    } else if let Some(matches) = matches.subcommand_matches("split") {
-        split(
-            matches.value_of("pkey").unwrap(),
-            matches.value_of("archive").unwrap(),
-            matches.value_of("head").unwrap(),
-            matches.value_of("data"),
-        )
-    } else if let Some(matches) = matches.subcommand_matches("verify") {
-        verify(
-            matches.value_of("pkey").unwrap(),
-            matches.value_of("archive").unwrap(),
-            matches.value_of("basedir").unwrap(),
-        )
-    } else {
-        Ok(())
+        ),
+        Some(("extract", sub_matches)) => extract(
+            sub_matches.get_one::<String>("pkey").unwrap().as_str(),
+            sub_matches.get_one::<String>("archive").unwrap().as_str(),
+            sub_matches.get_one::<String>("basedir").unwrap().as_str(),
+        ),
+        Some(("replace", sub_matches)) => {
+            let Some(old_archive) = sub_matches.get_one::<String>("old-archive") else {
+                return Err(Error::DataNotInitialized);
+            };
+            let old_pkey = sub_matches
+                .get_one::<String>("old-pkey")
+                .unwrap_or_else(|| sub_matches.get_one::<String>("pkey").unwrap());
+
+            replace(
+                old_pkey.as_str(),
+                sub_matches.get_one::<String>("pkey").unwrap().as_str(),
+                old_archive.as_str(),
+                sub_matches.get_one::<String>("archive").unwrap().as_str(),
+                sub_matches.get_one::<String>("basedir").unwrap().as_str(),
+            )
+        }
+        Some(("remove", sub_matches)) => remove(
+            sub_matches.get_one::<String>("pkey").unwrap().as_str(),
+            sub_matches.get_one::<String>("archive").unwrap().as_str(),
+            sub_matches.get_one::<String>("basedir").unwrap().as_str(),
+        ),
+        Some(("list", sub_matches)) => list(
+            sub_matches.get_one::<String>("pkey").unwrap().as_str(),
+            sub_matches.get_one::<String>("archive").unwrap().as_str(),
+        ),
+        Some(("split", sub_matches)) => split(
+            sub_matches.get_one::<String>("pkey").unwrap().as_str(),
+            sub_matches.get_one::<String>("archive").unwrap().as_str(),
+            sub_matches.get_one::<String>("head").unwrap().as_str(),
+            sub_matches.get_one::<String>("data").map(|s| s.as_str()),
+        ),
+        Some(("verify", sub_matches)) => verify(
+            sub_matches.get_one::<String>("pkey").unwrap().as_str(),
+            sub_matches.get_one::<String>("archive").unwrap().as_str(),
+            sub_matches.get_one::<String>("basedir").unwrap().as_str(),
+        ),
+        _ => Ok(()),
     }
 }
 

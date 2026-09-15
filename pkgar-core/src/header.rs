@@ -5,7 +5,7 @@ use bytemuck::{Pod, PodCastError, Zeroable};
 use core::mem;
 use dryoc::classic::crypto_sign::crypto_sign_open;
 
-use crate::{Entry, Error, HeaderFlags, PublicKey, ENTRY_SIZE, HEADER_SIZE};
+use crate::{ENTRY_SIZE, Entry, Error, HEADER_SIZE, HeaderFlags, PublicKey};
 
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 #[repr(packed, C)]
