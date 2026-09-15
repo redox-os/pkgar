@@ -1,6 +1,8 @@
 mod bin;
 pub mod ext;
 mod package;
+#[cfg(feature = "repo")]
+pub(crate) mod repo;
 mod transaction;
 
 pub use bin::*;
@@ -20,6 +22,9 @@ pub enum Error {
     Core(#[from] pkgar_core::Error),
     #[error(transparent)]
     Keys(#[from] pkgar_keys::Error),
+    #[error(transparent)]
+    #[cfg(feature = "repo")]
+    Repo(#[from] pkgar_repo::Error),
     #[error("{source} ({path:?}) {context:?}")]
     Io {
         #[source]
@@ -27,7 +32,9 @@ pub enum Error {
         path: Option<PathBuf>,
         context: &'static str,
     },
-    #[error("Failed to commit transaction ({changed} files changed, {remaining} files remaining): {source}")]
+    #[error(
+        "Failed to commit transaction ({changed} files changed, {remaining} files remaining): {source}"
+    )]
     FailedCommit {
         #[source]
         source: Box<Self>,

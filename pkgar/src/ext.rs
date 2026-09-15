@@ -9,7 +9,7 @@ use std::path::{Component, Path};
 use blake3::{Hash, Hasher};
 use pkgar_core::{Entry, Header, PackageSrc, Packaging};
 
-use crate::{wrap_io_err, Error};
+use crate::{Error, wrap_io_err};
 
 /// Handy associated functions for `pkgar_core::Entry` that depend on std
 pub trait EntryExt {

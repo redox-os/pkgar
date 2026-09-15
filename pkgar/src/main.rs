@@ -1,6 +1,6 @@
-use clap::{crate_authors, crate_description, crate_name, crate_version};
 use clap::{Arg, ArgAction, Command};
-use pkgar::{create_with_flags, extract, list, remove, replace, split, verify, Error};
+use clap::{crate_authors, crate_description, crate_name, crate_version};
+use pkgar::{Error, create_with_flags, extract, list, remove, replace, split, verify};
 use pkgar_keys::{DEFAULT_PUBKEY, DEFAULT_SECKEY};
 
 fn cli() -> Result<(), Error> {
