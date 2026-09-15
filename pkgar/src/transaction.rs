@@ -3,14 +3,14 @@ use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{symlink, MetadataExt, OpenOptionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, symlink};
 use std::path::{Path, PathBuf};
 
 use blake3::Hash;
 use pkgar_core::{Entry, Mode, PackageSrc};
 
-use crate::ext::{copy_and_hash, diff_package, EntryExt, PackageSrcExt};
-use crate::{wrap_io_err, Error, READ_WRITE_HASH_BUF_SIZE};
+use crate::ext::{EntryExt, PackageSrcExt, copy_and_hash, diff_package};
+use crate::{Error, READ_WRITE_HASH_BUF_SIZE, wrap_io_err};
 
 /// Determine the temporary path for a file, and create its parent directories.
 /// Returns `Err` if the target path is invalid or I/O error.
@@ -335,7 +335,7 @@ impl Transaction {
                 return Err(wrap_io_err!(
                     target_path.clone(),
                     "Opening file metadata for removal"
-                )(e))
+                )(e));
             }
         };
 

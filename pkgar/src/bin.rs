@@ -5,15 +5,15 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use pkgar_core::{
-    dryoc::classic::crypto_sign::crypto_sign_detached, Entry, Header, Mode, PackageSrc,
+    Entry, Header, Mode, PackageSrc, dryoc::classic::crypto_sign::crypto_sign_detached,
 };
 use pkgar_core::{HeaderFlags, PublicKey, SecretKey};
 use pkgar_keys::PublicKeyFile;
 
-use crate::ext::{copy_and_hash, DataWriter, EntryExt};
+use crate::ext::{DataWriter, EntryExt, copy_and_hash};
 use crate::package::PackageFile;
 use crate::transaction::Transaction;
-use crate::{wrap_io_err, Error};
+use crate::{Error, wrap_io_err};
 
 /// Iterate a directory and return its entries
 pub fn folder_entries<P>(base: P) -> Result<Vec<Entry>, Error>

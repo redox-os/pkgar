@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use bytemuck::Zeroable;
 use pkgar_core::{Header, PackageSrc, PublicKey};
 
-use crate::ext::{copy_and_hash, DataReader, EntryExt, PackageSrcExt};
-use crate::{wrap_io_err, Error, READ_WRITE_HASH_BUF_SIZE};
+use crate::ext::{DataReader, EntryExt, PackageSrcExt, copy_and_hash};
+use crate::{Error, READ_WRITE_HASH_BUF_SIZE, wrap_io_err};
 
 #[derive(Debug)]
 pub struct PackageFile {
