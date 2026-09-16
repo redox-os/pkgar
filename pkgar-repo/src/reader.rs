@@ -6,21 +6,25 @@ pub struct PackageUrlReader<'a> {
     client: &'a ureq::Agent,
     url: String,
     offset: u64,
+    len: u64,
 }
 
 impl<'a> PackageUrlReader<'a> {
-    pub fn new(client: &'a ureq::Agent, url: &str) -> Self {
+    pub fn new(client: &'a ureq::Agent, url: &str, len: u64) -> Self {
         Self {
             client,
             url: url.to_string(),
             offset: 0,
+            len,
         }
     }
-
     pub fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize, Error> {
-        if buf.is_empty() {
+        if buf.is_empty() || offset >= self.len {
             return Ok(0);
         }
+
+        let remaining_bytes = self.len - offset;
+        let read_len = std::cmp::min(buf.len() as u64, remaining_bytes) as usize;
         let end_offset = offset
             .checked_add(
                 u64::try_from(
@@ -34,33 +38,45 @@ impl<'a> PackageUrlReader<'a> {
 
         let range = format!("bytes={}-{}", offset, end_offset);
 
-        let mut response = self.client.get(&self.url).header("Range", &range).call()?;
+        let response = self.client.get(&self.url).header("Range", &range).call();
 
         // eprintln!(
-        //     "Request {} from {} = {:?}",
+        //     "curl -i -H \"Range: {}\" {} => {:?}",
         //     range,
         //     self.url,
-        //     response.status()
+        //     response.as_ref().map(|s| format!(
+        //         "{:?} [{} B]",
+        //         s.status(),
+        //         s.body().content_length().unwrap_or(0)
+        //     ))
         // );
+
+        let exact_buf = &mut buf[..read_len];
+        let mut response = response?;
 
         response
             .body_mut()
             .as_reader()
-            .read_exact(buf)
+            .read_exact(exact_buf)
             .map_err(|source| pkgar_keys::Error::Io {
                 source,
                 path: Some(self.url.clone().into()),
                 context: "Downloading pkgar",
             })?;
 
-        Ok(buf.len())
+        Ok(read_len)
     }
 }
 
 impl<'a> Read for PackageUrlReader<'a> {
     fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
-        self.read_at(self.offset, buf)
-            .map_err(|e| IoError::other(e.to_string()))
+        match self.read_at(self.offset, buf) {
+            Ok(s) => {
+                self.offset += s as u64;
+                Ok(s)
+            }
+            Err(e) => Err(IoError::other(e.to_string())),
+        }
     }
 }
 

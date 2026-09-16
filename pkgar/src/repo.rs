@@ -30,6 +30,20 @@ pub enum GenericPackage {
 }
 
 impl GenericPackage {
+    pub fn split(
+        &mut self,
+        head_path: impl AsRef<Path>,
+        data_path_opt: Option<impl AsRef<Path>>,
+    ) -> Result<(), Error> {
+        let data_offset = self.header().total_size()? as u64;
+        let mut src = self.take_reader()?;
+
+        src = PackageFile::split_inner(data_path_opt, head_path, data_offset, src)?;
+
+        self.restore_reader(src)?;
+
+        Ok(())
+    }
     pub fn verify(&mut self, base_dir: impl AsRef<Path>) -> Result<(), Error> {
         let base_dir = base_dir.as_ref();
         let entries = self.read_entries()?;
@@ -69,7 +83,7 @@ impl PackageSrc for GenericPackage {
     }
 }
 
-impl<'a> PackageSrcExt<GenericReader<'static>> for GenericPackage {
+impl PackageSrcExt<GenericReader> for GenericPackage {
     fn path(&self) -> Cow<'_, str> {
         match self {
             GenericPackage::File(package_file) => package_file.path(),
@@ -77,49 +91,48 @@ impl<'a> PackageSrcExt<GenericReader<'static>> for GenericPackage {
         }
     }
 
-    fn take_reader(&mut self) -> Result<GenericReader<'static>, Error> {
+    fn take_reader(&mut self) -> Result<GenericReader, Error> {
         match self {
             GenericPackage::File(package_file) => {
                 package_file.take_reader().map(GenericReader::File)
             }
-            GenericPackage::Url(package_url) => Ok(GenericReader::Url(package_url.get_reader())),
+            GenericPackage::Url(package_url) => {
+                Ok(GenericReader::Url(package_url.take_reader().unwrap()))
+            }
         }
     }
 
-    fn restore_reader(&mut self, reader: GenericReader<'static>) -> Result<(), Error> {
-        match self {
-            GenericPackage::File(package_file) => {
-                let GenericReader::File(reader) = reader else {
-                    return Err(Error::DataNotInitialized);
-                };
+    fn restore_reader(&mut self, reader: GenericReader) -> Result<(), Error> {
+        match (self, reader) {
+            (GenericPackage::File(package_file), GenericReader::File(reader)) => {
                 package_file.restore_reader(reader)
             }
-            GenericPackage::Url(_) => Ok(()),
+            (GenericPackage::Url(package_url), GenericReader::Url(reader)) => {
+                Ok(package_url.restore_reader(reader).unwrap())
+            }
+            _ => Err(Error::DataNotInitialized),
         }
     }
 }
 
-pub enum GenericReader<'a> {
+pub enum GenericReader {
     File(std::fs::File),
-
-    Url(pkgar_repo::PackageUrlReader<'a>),
+    Url(pkgar_repo::PackageUrlCache<'static>),
 }
 
-impl<'a> Read for GenericReader<'a> {
+impl Read for GenericReader {
     fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
         match self {
             Self::File(f) => f.read(buf),
-
             Self::Url(u) => u.read(buf),
         }
     }
 }
 
-impl<'a> Seek for GenericReader<'a> {
+impl Seek for GenericReader {
     fn seek(&mut self, pos: SeekFrom) -> IoResult<u64> {
         match self {
             Self::File(f) => f.seek(pos),
-
             Self::Url(u) => u.seek(pos),
         }
     }

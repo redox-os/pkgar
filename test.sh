@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 
 build=release
-if [[ "$1" == "-d" ]]; then
-    build=debug
-fi
-
 create_flag=
-if [[ "$1" == "-c" ]]; then
-    create_flag=-c
-fi
+remote=0
+
+for arg in "$@"; do
+    case $arg in
+        -d) build=debug ;;
+        -c) create_flag=-c ;;
+        -r) remote=1 ;;
+    esac
+done
 
 set -ex
 
@@ -21,74 +23,91 @@ else
     cargo build --release --all-features
 fi
 
-time target/$build/pkgar-keys gen \
-    --skey target/test/secret.toml \
-    --pkey target/test/public.toml \
-    --plaintext
+if [[ "$remote" -eq 1 ]]; then
+    PKEY="https://static.redox-os.org/pkg/id_ed25519.pub.toml"
+    ARCHIVE="https://static.redox-os.org/pkg/x86_64-unknown-redox/shared-mime-info.pkgar"
+    EXTRACT_DIR="target/test/remote_src"
+    SPLIT_DATA=""
+    mkdir -p "$EXTRACT_DIR"
+else
+    PKEY="target/test/public.toml"
+    SKEY="target/test/secret.toml"
+    ARCHIVE="target/test/src.pkgar"
+    EXTRACT_DIR="target/test/src"
+    SPLIT_DATA="target/test/src.pkgar_data"
 
-time target/$build/pkgar \
-    create $create_flag \
-    --skey target/test/secret.toml \
-    --archive target/test/src.pkgar \
-    pkgar/src
+    time target/$build/pkgar-keys gen \
+        --skey "$SKEY" \
+        --pkey "$PKEY" \
+        --plaintext
 
-stat -c %s target/test/src.pkgar
+    time target/$build/pkgar \
+        create $create_flag \
+        --skey "$SKEY" \
+        --archive "$ARCHIVE" \
+        pkgar/src
+
+    stat -c %s "$ARCHIVE"
+fi
 
 time target/$build/pkgar \
     list \
-    --pkey target/test/public.toml \
-    --archive target/test/src.pkgar
+    --pkey "$PKEY" \
+    --archive "$ARCHIVE"
 
 time target/$build/pkgar \
     split \
-    --pkey target/test/public.toml \
-    --archive target/test/src.pkgar \
+    --pkey "$PKEY" \
+    --archive "$ARCHIVE" \
     target/test/src.pkgar_head \
-    target/test/src.pkgar_data
+    $SPLIT_DATA
 
-stat -c %s target/test/src.pkgar_head
-stat -c %s target/test/src.pkgar_data
+stat -c %s target/test/src.pkgar_head $SPLIT_DATA
 
 time target/$build/pkgar \
     list \
-    --pkey target/test/public.toml \
+    --pkey "$PKEY" \
     --archive target/test/src.pkgar_head
 
 time target/$build/pkgar \
     extract \
-    --pkey target/test/public.toml \
-    --archive target/test/src.pkgar \
-    target/test/src
+    --pkey "$PKEY" \
+    --archive "$ARCHIVE" \
+    "$EXTRACT_DIR"
 
-diff -ruwN pkgar/src target/test/src
+if [[ "$remote" -eq 0 ]]; then
+    diff -ruwN pkgar/src "$EXTRACT_DIR"
+fi
 
 time target/$build/pkgar \
     replace \
-    --pkey target/test/public.toml \
-    --old-archive target/test/src.pkgar \
-    --archive target/test/src.pkgar \
-    target/test/src
+    --pkey "$PKEY" \
+    --old-archive "$ARCHIVE" \
+    --archive "$ARCHIVE" \
+    "$EXTRACT_DIR"
 
-diff -ruwN pkgar/src target/test/src
-
-time target/$build/pkgar \
-    verify \
-    --pkey target/test/public.toml \
-    --archive target/test/src.pkgar \
-    target/test/src
+if [[ "$remote" -eq 0 ]]; then
+    diff -ruwN pkgar/src "$EXTRACT_DIR"
+fi
 
 time target/$build/pkgar \
     verify \
-    --pkey target/test/public.toml \
+    --pkey "$PKEY" \
+    --archive "$ARCHIVE" \
+    "$EXTRACT_DIR"
+
+time target/$build/pkgar \
+    verify \
+    --pkey "$PKEY" \
     --archive target/test/src.pkgar_head \
-    target/test/src
+    "$EXTRACT_DIR"
 
 time target/$build/pkgar \
     remove \
-    --pkey target/test/public.toml \
-    --archive target/test/src.pkgar \
-    target/test/src
+    --pkey "$PKEY" \
+    --archive "$ARCHIVE" \
+    "$EXTRACT_DIR"
 
-if [[ "$(find target/test/src '!' -type d)" ]]; then
+if [[ "$(find "$EXTRACT_DIR" '!' -type d)" ]]; then
     exit 1
 fi
