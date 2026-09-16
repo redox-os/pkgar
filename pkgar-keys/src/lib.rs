@@ -1,5 +1,6 @@
 mod error;
 
+use std::ffi::CStr;
 use std::fs::{self, File, OpenOptions};
 use std::io::Read;
 use std::io::Write;
@@ -10,6 +11,7 @@ use std::path::Path;
 use std::{path::PathBuf, sync::LazyLock};
 
 use hex::FromHex;
+use memsafe::Secret;
 use pkgar_core::{
     PublicKey, SecretKey,
     dryoc::{
@@ -22,7 +24,6 @@ use pkgar_core::{
         types::NewByteArray,
     },
 };
-use seckey::SecBytes;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "cli")]
 use termion::input::TermRead;
@@ -168,7 +169,7 @@ enum SKey {
 }
 
 impl SKey {
-    fn encrypt(&mut self, passwd: Passwd, salt: Salt, nonce: Nonce) -> Result<(), Error> {
+    fn encrypt(&mut self, mut passwd: Passwd, salt: Salt, nonce: Nonce) -> Result<(), Error> {
         if let SKey::Plain(skey) = self {
             if let Some(passwd_key) = passwd.gen_key(salt) {
                 let mut buf = [0; 80];
@@ -180,7 +181,7 @@ impl SKey {
         Ok(())
     }
 
-    fn decrypt(&mut self, passwd: Passwd, salt: Salt, nonce: Nonce) -> Result<(), Error> {
+    fn decrypt(&mut self, mut passwd: Passwd, salt: Salt, nonce: Nonce) -> Result<(), Error> {
         if let SKey::Cipher(ciphertext) = self {
             let mut buf = [0; 64];
             if let Some(passwd_key) = passwd.gen_key(salt) {
@@ -356,19 +357,17 @@ impl SecretKeyFile {
 
 /// Secure in-memory representation of a password.
 pub struct Passwd {
-    bytes: SecBytes,
+    bytes: Secret<4096>,
 }
 
 impl Passwd {
     /// Create a new `Passwd` and zero the old string.
-    pub fn new(passwd: &mut String) -> Passwd {
+    pub fn new(passwd: String) -> Result<Passwd, Error> {
         let pwd = Passwd {
-            bytes: SecBytes::with(passwd.len(), |buf| buf.copy_from_slice(passwd.as_bytes())),
+            bytes: Secret::from_bytes(passwd.into_bytes())
+                .map_err(|_| Error::PassphraseStoreError)?,
         };
-        unsafe {
-            seckey::zero(passwd.as_bytes_mut());
-        }
-        pwd
+        Ok(pwd)
     }
 
     /// Prompt the user for a `Passwd` on stdin.
@@ -394,7 +393,7 @@ impl Passwd {
             context: "Flushing prompt",
         })?;
 
-        let Some(mut passwd) = stdin.read_passwd(&mut stdout).map_err(|source| Error::Io {
+        let Some(passwd) = stdin.read_passwd(&mut stdout).map_err(|source| Error::Io {
             source,
             path: None,
             context: "Reading passwd",
@@ -409,31 +408,34 @@ impl Passwd {
 
         println!();
 
-        Ok(Passwd::new(&mut passwd))
+        Passwd::new(passwd)
     }
 
     /// Prompt for a password on stdin and confirm it. For configurable
     /// prompts, use [`Passwd::prompt`](struct.Passwd.html#method.prompt).
     #[cfg(feature = "cli")]
     pub fn prompt_new() -> Result<Passwd, Error> {
-        let passwd = Passwd::prompt(
+        let mut passwd = Passwd::prompt(
             "Please enter a new passphrase (leave empty to store the key in plaintext): ",
         )?;
-        let confirm = Passwd::prompt("Please re-enter the passphrase: ")?;
+        let mut confirm = Passwd::prompt("Please re-enter the passphrase: ")?;
 
-        if passwd != confirm {
+        if !passwd.is_equal(&mut confirm) {
             return Err(Error::PassphraseMismatch);
         }
         Ok(passwd)
     }
 
     /// Get a key for symmetric key encryption from a password.
-    pub(crate) fn gen_key(&self, salt: Salt) -> Option<Key> {
-        if !self.bytes.read().is_empty() {
+    pub(crate) fn gen_key(&mut self, salt: Salt) -> Option<Key> {
+        let passwd = self.bytes.read().expect("Failed to access stored passwd");
+        let passwd_cstr =
+            CStr::from_bytes_until_nul(passwd.deref()).expect("Stored passwd is out of range");
+        if !passwd_cstr.is_empty() {
             let mut key = [0; 32];
             crypto_pwhash(
                 &mut key,
-                &self.bytes.read(),
+                passwd_cstr.to_bytes(),
                 &salt,
                 CRYPTO_PWHASH_OPSLIMIT_INTERACTIVE,
                 CRYPTO_PWHASH_MEMLIMIT_INTERACTIVE,
@@ -445,14 +447,14 @@ impl Passwd {
             None
         }
     }
-}
 
-impl PartialEq for Passwd {
-    fn eq(&self, other: &Passwd) -> bool {
-        self.bytes.read().deref() == other.bytes.read().deref()
+    pub fn is_equal(&mut self, other: &mut Self) -> bool {
+        let (Ok(lhs), Ok(rhs)) = (self.bytes.read(), other.bytes.read()) else {
+            return false;
+        };
+        lhs.deref() == rhs.deref()
     }
 }
-impl Eq for Passwd {}
 
 /// Generate a new keypair. The new keys will be saved to `file`. The user
 /// will be prompted on stdin for a password, empty passwords will cause the
