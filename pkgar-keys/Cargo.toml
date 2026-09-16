@@ -14,13 +14,13 @@ required-features = ["cli"]
 
 [dependencies]
 clap = { version = "4", optional = true, features = ["cargo"] }
-dirs = { version = "6", optional = true }
-hex = { version = "0.4.2", features = ["serde"] }
+dirs = { version = "7", optional = true }
+hex = { version = "0.4.3", features = ["serde"] }
 pkgar-core = { path = "../pkgar-core", version = "0.2.3" }
 seckey = "0.12"
 serde = { version = "1", default-features = false, features = ["derive"] }
 termion = { version = "4", optional = true }
-toml = "0.8"
+toml = "1"
 thiserror = "2"
 
 [features]
