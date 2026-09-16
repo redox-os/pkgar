@@ -116,9 +116,10 @@ impl Transaction {
     }
 
     /// Creates new transactions to install from a pkgar file. Overwrites any existing file.
-    pub fn install<Pkg>(src: &mut Pkg, base_dir: impl AsRef<Path>) -> Result<Self, Error>
+    pub fn install<Pkg, R>(src: &mut Pkg, base_dir: impl AsRef<Path>) -> Result<Self, Error>
     where
-        Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
+        R: io::Read + io::Seek,
+        Pkg: PackageSrc<Err = Error> + PackageSrcExt<R>,
     {
         let entries = src.read_entries()?;
         let mut transaction = Transaction::new();
@@ -129,7 +130,7 @@ impl Transaction {
     /// Add transactions to install from a pkgar file with filtered or modified entries.
     ///
     /// To allow overwriting existing files, set `skip_local_check` to `true`.
-    pub fn install_with_entries<Pkg>(
+    pub fn install_with_entries<Pkg, R>(
         &mut self,
         src: &mut Pkg,
         entries: &[Entry],
@@ -137,7 +138,8 @@ impl Transaction {
         skip_local_check: bool,
     ) -> Result<(), Error>
     where
-        Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
+        R: io::Read + io::Seek,
+        Pkg: PackageSrc<Err = Error> + PackageSrcExt<R>,
     {
         for entry in entries {
             self.install_one(src, entry, &base_dir, skip_local_check)?
@@ -149,7 +151,7 @@ impl Transaction {
     /// Create a new action to install an [`Entry`] of `src` to `base_dir`.
     ///
     /// To allow overwriting existing files, set `skip_local_check` to `true`.
-    pub fn install_one<Pkg>(
+    pub fn install_one<Pkg, R>(
         &mut self,
         src: &mut Pkg,
         entry: &Entry,
@@ -157,7 +159,8 @@ impl Transaction {
         skip_local_check: bool,
     ) -> Result<(), Error>
     where
-        Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
+        R: io::Read + io::Seek,
+        Pkg: PackageSrc<Err = Error> + PackageSrcExt<R>,
     {
         let relative_path = entry.check_path()?;
         let target_path = base_dir.as_ref().join(relative_path);
@@ -176,7 +179,6 @@ impl Transaction {
         let tmp_path = temp_path(&target_path, entry.blake3())?;
         let mode = entry.mode().map_err(Error::from)?;
         let mut data_reader = src.data_reader(entry)?;
-
         let (entry_data_size, entry_data_hash) = match mode.kind() {
             Mode::FILE => {
                 let mut tmp_file = fs::OpenOptions::new()
@@ -209,13 +211,16 @@ impl Transaction {
     /// Create new transactions to replace old files from a pkgar file.
     /// Does not overwrite existing file if the file is not updated between two package.
     /// Does not replace or remove existing file if the file is changed locally.
-    pub fn replace<Pkg>(
-        old: &mut Pkg,
-        new: &mut Pkg,
+    pub fn replace<PkgOld, PkgNew, R1, R2>(
+        old: &mut PkgOld,
+        new: &mut PkgNew,
         base_dir: impl AsRef<Path>,
     ) -> Result<Transaction, Error>
     where
-        Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
+        R1: io::Read + io::Seek,
+        R2: io::Read + io::Seek,
+        PkgOld: PackageSrc<Err = Error> + PackageSrcExt<R1>,
+        PkgNew: PackageSrc<Err = Error> + PackageSrcExt<R2>,
     {
         let old_entries = old.read_entries()?;
         let new_entries = new.read_entries()?;
@@ -233,17 +238,20 @@ impl Transaction {
 
     /// Add transactions to replace old files from a pkgar file with filtered or modified entries.
     /// To skip checking and allow overwrite locally modified files being replaced, set `skip_local_check` to true.
-    pub fn replace_with_entries<Pkg>(
+    pub fn replace_with_entries<PkgOld, PkgNew, R1, R2>(
         &mut self,
         old_entries: &[Entry],
         new_entries: &[Entry],
-        old: Option<&Pkg>,
-        new: &mut Pkg,
+        old: Option<&PkgOld>,
+        new: &mut PkgNew,
         base_dir: impl AsRef<Path>,
         skip_local_check: bool,
     ) -> Result<(), Error>
     where
-        Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
+        R1: io::Read + io::Seek,
+        R2: io::Read + io::Seek,
+        PkgOld: PackageSrc<Err = Error> + PackageSrcExt<R1>,
+        PkgNew: PackageSrc<Err = Error> + PackageSrcExt<R2>,
     {
         let (entries_to_install, entries_to_remove) =
             self.replace_diff(old_entries, new_entries)?;
@@ -272,9 +280,10 @@ impl Transaction {
     }
 
     /// Prepare transactions to remove files from a pkgar file.  Does not remove files with different hash
-    pub fn remove<Pkg>(src: &mut Pkg, base_dir: impl AsRef<Path>) -> Result<Self, Error>
+    pub fn remove<Pkg, R>(src: &mut Pkg, base_dir: impl AsRef<Path>) -> Result<Self, Error>
     where
-        Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
+        R: io::Read + io::Seek,
+        Pkg: PackageSrc<Err = Error> + PackageSrcExt<R>,
     {
         let entries = src.read_entries()?;
         let mut transaction = Transaction::new();
@@ -285,7 +294,7 @@ impl Transaction {
     /// Prepare transactions to remove files from a pkgar file with filtered or modified entries.
     ///
     /// To skip checking and allow removal for locally modified files, set `skip_local_check` to `true`.
-    pub fn remove_with_entries<Pkg>(
+    pub fn remove_with_entries<Pkg, R>(
         &mut self,
         src: Option<&Pkg>,
         entries: &[Entry],
@@ -293,7 +302,8 @@ impl Transaction {
         skip_local_check: bool,
     ) -> Result<(), Error>
     where
-        Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
+        R: io::Read + io::Seek,
+        Pkg: PackageSrc<Err = Error> + PackageSrcExt<R>,
     {
         for entry in entries {
             self.remove_one(src, entry, &base_dir, skip_local_check)?;
@@ -304,7 +314,7 @@ impl Transaction {
     /// Create a new action to uninstall an [`Entry`] to `base_dir`.
     ///
     /// To skip checking and allow removal for locally modified files, set `skip_local_check` to `true`.
-    pub fn remove_one<Pkg>(
+    pub fn remove_one<Pkg, R>(
         &mut self,
         src: Option<&Pkg>,
         entry: &Entry,
@@ -312,7 +322,8 @@ impl Transaction {
         skip_local_check: bool,
     ) -> Result<(), Error>
     where
-        Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
+        R: io::Read + io::Seek,
+        Pkg: PackageSrc<Err = Error> + PackageSrcExt<R>,
     {
         let relative_path = entry.check_path()?;
         let target_path = base_dir.as_ref().join(relative_path);
@@ -375,9 +386,10 @@ impl Transaction {
     }
 
     /// Internal function to push new action
-    fn push_action<Pkg>(&mut self, action: Action, src: Option<&Pkg>)
+    fn push_action<Pkg, R>(&mut self, action: Action, src: Option<&Pkg>)
     where
-        Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
+        R: io::Read + io::Seek,
+        Pkg: PackageSrc<Err = Error> + PackageSrcExt<R>,
     {
         let action_key = action.target_file();
         match self.path_map.entry(action_key.to_path_buf()) {
@@ -547,9 +559,10 @@ impl Transaction {
     }
 
     /// Add a newer transaction with their source package for optional conflict identification
-    pub fn merge<Pkg>(&mut self, newer: Transaction, src: Option<&Pkg>)
+    pub fn merge<Pkg, R>(&mut self, newer: Transaction, src: Option<&Pkg>)
     where
-        Pkg: PackageSrc<Err = Error> + PackageSrcExt<File>,
+        R: io::Read + io::Seek,
+        Pkg: PackageSrc<Err = Error> + PackageSrcExt<R>,
     {
         self.indexed += newer.indexed;
         self.committed += newer.committed;
