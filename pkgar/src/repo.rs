@@ -1,35 +1,50 @@
 use std::{
     borrow::Cow,
-    io::{Seek, SeekFrom},
+    io::{Read, Result as IoResult, Seek, SeekFrom},
     path::Path,
+    sync::OnceLock,
 };
 
-use std::{io::Read, sync::OnceLock};
-
-use pkgar_core::Header;
-use pkgar_core::{PackageSrc, PublicKey};
-
+use crate::{Error, PackageFile, ext::PackageSrcExt};
+use pkgar_core::{Header, PackageSrc, PublicKey};
+use pkgar_keys::PublicKeyFile;
 use pkgar_repo::{PackageUrl, PublicKeyRemote};
 
-use crate::{Error, PackageFile, ext::PackageSrcExt};
-use std::io::Result as IoResult;
-
-pub fn open_or_download_pubkey(pkey_path: impl AsRef<Path>) -> Result<PublicKey, Error> {
-    let pkey_path = pkey_path.as_ref();
-
-    let file = PublicKeyRemote::download_or_read(&pkgar_repo::new_client(), pkey_path)?;
-    Ok(file.pkey)
+pub(crate) fn open_or_download_pubkey(pkey_path: impl AsRef<Path>) -> Result<PublicKeyFile, Error> {
+    Ok(PublicKeyRemote::download_or_read(
+        &pkgar_repo::new_client(),
+        pkey_path.as_ref(),
+    )?)
 }
 
 static REPO_CLIENT: OnceLock<pkgar_repo::Agent> = OnceLock::new();
 
+/// A package that is either opened from local or remote
 pub enum GenericPackage {
     File(PackageFile),
-
     Url(PackageUrl<'static>),
 }
 
 impl GenericPackage {
+    pub fn open_or_download(
+        archive_path: impl AsRef<Path>,
+        pkey: &PublicKey,
+    ) -> Result<Self, Error> {
+        let archive_path = archive_path.as_ref();
+
+        {
+            if let Some(archive_path_str) = archive_path.to_str()
+                && pkgar_repo::is_remote(archive_path_str)
+            {
+                let agent = REPO_CLIENT.get_or_init(pkgar_repo::new_client);
+                let pkg = PackageUrl::new(agent, archive_path_str.to_string(), pkey)?;
+                return Ok(Self::Url(pkg));
+            }
+        }
+
+        Ok(Self::File(PackageFile::new(archive_path, pkey)?))
+    }
+
     pub fn split(
         &mut self,
         head_path: impl AsRef<Path>,
@@ -63,6 +78,7 @@ impl GenericPackage {
         Ok(())
     }
 }
+
 impl PackageSrc for GenericPackage {
     type Err = Error;
 
@@ -115,6 +131,7 @@ impl PackageSrcExt<GenericReader> for GenericPackage {
     }
 }
 
+/// A reader that is either holding a file descriptor or remote cache
 pub enum GenericReader {
     File(std::fs::File),
     Url(pkgar_repo::PackageUrlCache<'static>),
@@ -136,25 +153,4 @@ impl Seek for GenericReader {
             Self::Url(u) => u.seek(pos),
         }
     }
-}
-
-pub fn open_or_download_pkgar(
-    archive_path: impl AsRef<Path>,
-    pkey: &PublicKey,
-) -> Result<GenericPackage, Error> {
-    let archive_path = archive_path.as_ref();
-
-    {
-        if let Some(archive_path_str) = archive_path.to_str()
-            && pkgar_repo::is_remote(archive_path_str)
-        {
-            let agent = REPO_CLIENT.get_or_init(pkgar_repo::new_client);
-
-            let pkg = PackageUrl::new(agent, archive_path_str.to_string(), pkey)?;
-
-            return Ok(GenericPackage::Url(pkg));
-        }
-    }
-
-    Ok(GenericPackage::File(PackageFile::new(archive_path, pkey)?))
 }

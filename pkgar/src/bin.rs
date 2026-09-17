@@ -4,16 +4,16 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-#[cfg(not(feature = "repo"))]
-use crate::package::PackageFile;
 use pkgar_core::{Entry, Header, Mode, dryoc::classic::crypto_sign::crypto_sign_detached};
 use pkgar_core::{HeaderFlags, PackageSrc, PublicKey, SecretKey};
 #[cfg(not(feature = "repo"))]
 use pkgar_keys::PublicKeyFile;
 
 use crate::ext::{DataWriter, EntryExt, PackageSrcExt, copy_and_hash};
+#[cfg(not(feature = "repo"))]
+use crate::package::PackageFile;
 #[cfg(feature = "repo")]
-use crate::repo::{open_or_download_pkgar, open_or_download_pubkey};
+use crate::repo::{GenericPackage, open_or_download_pubkey};
 use crate::transaction::Transaction;
 use crate::{Error, READ_WRITE_HASH_BUF_SIZE, wrap_io_err};
 
@@ -262,11 +262,11 @@ fn create_with_entries(
 macro_rules! init_package {
     ($pkey_path:expr, $archive_path:expr) => {{
         #[cfg(feature = "repo")]
-        let pkey = open_or_download_pubkey($pkey_path)?;
+        let pkey = open_or_download_pubkey($pkey_path)?.pkey;
         #[cfg(not(feature = "repo"))]
         let pkey = PublicKeyFile::open($pkey_path)?.pkey;
         #[cfg(feature = "repo")]
-        let package = open_or_download_pkgar($archive_path, &pkey)?;
+        let package = GenericPackage::open_or_download($archive_path, &pkey)?;
         #[cfg(not(feature = "repo"))]
         let package = PackageFile::new($archive_path, &pkey)?;
 
