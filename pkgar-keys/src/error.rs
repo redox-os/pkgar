@@ -30,6 +30,8 @@ pub enum Error {
     PassphraseMismatch,
     #[error("A passphrase to decrypt secret key is required")]
     PassphraseRequired,
+    #[error("Unable to access or store passphrase, or the password is too long")]
+    PassphraseStoreError,
 }
 
 impl fmt::Debug for Error {
