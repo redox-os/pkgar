@@ -7,6 +7,8 @@ mod transaction;
 
 pub use bin::*;
 pub use package::*;
+#[cfg(feature = "repo")]
+pub use repo::*;
 pub use transaction::*;
 
 use std::io;
