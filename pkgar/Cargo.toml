@@ -15,9 +15,9 @@ required-features = ["cli"]
 bytemuck = {version = "1", features = ["derive"]}
 clap = { version = "4", optional = true, features = ["cargo"] }
 lzma-rust2 = "0.20"
-pkgar-core = { path = "../pkgar-core", version = "0.2.3" }
-pkgar-keys = { path = "../pkgar-keys", version = "0.2.3" }
-pkgar-repo = { path = "../pkgar-repo", version = "0.2.3", optional = true }
+pkgar-core = { path = "../pkgar-core", version = "0.2.4" }
+pkgar-keys = { path = "../pkgar-keys", version = "0.2.4" }
+pkgar-repo = { path = "../pkgar-repo", version = "0.2.4", optional = true }
 thiserror = "2"
 
 [dependencies.blake3]
@@ -30,7 +30,7 @@ copy_dir = "0.1"
 tempfile = "3"
 
 [features]
-default = ["std", "cli"]
+default = ["std"]
 cli = ["clap", "std", "pkgar-keys/cli"]
 repo = ["pkgar-repo"]
 # TODO: not used, remove
