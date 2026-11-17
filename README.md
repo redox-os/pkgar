@@ -1,3 +1,5 @@
+# This project has been merged to [pkgutils](https://gitlab.redox-os.org/redox-os/pkgutils/)
+
 # pkgar - Package Archive
 
 Pkgar is the package archive format for Redox OS.
